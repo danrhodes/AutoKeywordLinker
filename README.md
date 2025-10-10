@@ -1,5 +1,3 @@
-# AutoKeywordLinker
-Automatically creates Obsidian backlinks for specified keywords with variations and preview mode
 # Auto Keyword Linker for Obsidian
 
 Automatically convert keywords into wiki-style links throughout your Obsidian vault. This plugin helps you build a richly interconnected knowledge graph by intelligently linking keywords to their target notes, creating a web of backlinks that reveals hidden connections in your notes.
@@ -48,9 +46,11 @@ Define keywords and their variations in an intuitive interface. Each keyword con
 - Companies with abbreviated names
 
 **Example Configuration**:
+```
 Keyword: Machine Learning
 Target: Concepts/Machine Learning
 Variations: ML, machine learning, neural networks
+```
 
 Any mention of "Machine Learning", "ML", "machine learning", or "neural networks" in your notes will automatically link to "Concepts/Machine Learning".
 
@@ -67,7 +67,7 @@ The plugin uses intelligent pattern matching to find keywords while avoiding fal
 
 Before making any changes, preview exactly what will be linked:
 
-- **Visual Preview**: See each keyword that will be linked with surrounding context
+- **Visual Preview**: See each keyword that will be linked with the surrounding context
 - **Change Statistics**: Know how many links will be created in how many notes
 - **Safe Exploration**: Preview shows what *would* happen without modifying files
 - **Bulk Preview**: When processing all notes, see a comprehensive summary before applying
@@ -128,3 +128,364 @@ Created: {{date}}
 ## Overview
 
 ## Related Notes
+```
+
+### 7. **Case Sensitivity Control**
+
+Choose how strictly keywords should match:
+
+- **Case Sensitive**: "Keyword" only matches "Keyword" (not "keyword" or "KEYWORD")
+- **Case Insensitive** (default): "Keyword" matches any capitalisation
+
+### 8. **Safe File Processing**
+
+The plugin includes multiple safety features:
+
+- **Markdown Only**: Only processes `.md` files, ignoring attachments (.pdf, .docx, .png, etc.)
+- **Existing Link Protection**: Never modifies text already inside wiki links
+- **Code Preservation**: Respects code blocks and inline code
+- **Backup Friendly**: All changes are applied through Obsidian's API, compatible with sync and backup solutions
+
+## 🚀 Use Cases
+
+### Personal Knowledge Management
+
+**Scenario**: You maintain notes about people, projects, and concepts.
+
+**Setup**:
+```
+Keyword: John Smith
+Target: People/John Smith
+Variations: John, JS, J. Smith
+
+Keyword: Project Alpha
+Target: Projects/Project Alpha
+Variations: Alpha, Proj Alpha, PA
+```
+
+**Result**: Every time you mention "John Smith", "John", or "JS" in meeting notes, journal entries, or project documentation, it automatically links to his dedicated note. Your graph view shows all connections between John, projects, and other people.
+
+### Research and Academia
+
+**Scenario**: You're researching a topic with many technical terms and author names.
+
+**Setup**:
+```
+Keyword: Neural Networks
+Target: Concepts/Neural Networks
+Variations: NN, neural net, artificial neural networks
+
+Keyword: Geoffrey Hinton
+Target: Researchers/Geoffrey Hinton
+Variations: Hinton, G. Hinton, G.E. Hinton
+```
+
+**Result**: Technical terms and researcher names are consistently linked throughout your literature notes, creating a web of connections between papers, concepts, and authors.
+
+### Project Management
+
+**Scenario**: You track multiple projects with team members and deliverables.
+
+**Setup**:
+```
+Keyword: Website Redesign
+Target: Projects/Website Redesign 2025
+Variations: redesign, new website, site redesign
+
+Keyword: Sarah Johnson
+Target: Team/Sarah Johnson
+Variations: Sarah, SJ, S. Johnson
+```
+
+**Result**: Project names and team members are automatically linked in status updates, meeting notes, and task lists. Your graph reveals project dependencies and team collaboration patterns.
+
+### Zettelkasten Method
+
+**Scenario**: You're building a Zettelkasten with permanent notes, literature notes, and index notes.
+
+**Setup**:
+```
+Keyword: Atomic Notes
+Target: MOC/Atomic Notes Principle
+Variations: atomic note, atomicity in notes
+
+Keyword: Evergreen Notes
+Target: MOC/Evergreen Notes
+Variations: evergreen, evergreen content
+```
+
+**Result**: Core concepts are consistently linked across all your notes, strengthening the conceptual web that makes Zettelkasten powerful.
+
+## 📊 Graph Building Benefits
+
+### Why Backlinks Matter
+
+In Obsidian, every link creates two connections:
+1. **Forward Link**: From the current note to the target
+2. **Backlink**: From the target back to the current note
+
+Auto Keyword Linker leverages this to build your graph automatically:
+
+### Before Auto Keyword Linker
+```
+Your workflow:
+1. Write: "Discussed neural networks in the meeting"
+2. Manually edit: "Discussed [[Neural Networks]] in the meeting"
+3. Repeat for every mention in every note
+4. Often forget or skip linking due to tedium
+
+Result: Sparse graph with missing connections
+```
+
+### After Auto Keyword Linker
+```
+Your workflow:
+1. Write naturally: "Discussed neural networks in the meeting"
+2. Save (or run command)
+3. Plugin automatically links: "Discussed [[Neural Networks]] in the meeting"
+
+Result: Dense, comprehensive graph that reveals true knowledge structure
+```
+
+### Graph Benefits in Practice
+
+**Discovering Patterns**: 
+- See which concepts appear together in your notes
+- Identify which projects share team members
+- Understand concept relationships through co-occurrence
+
+**Contextual Navigation**:
+- Click on a keyword in the graph to see all related notes
+- Use backlinks to find every discussion involving a person or topic
+- Navigate your knowledge by following connection threads
+
+**Knowledge Emergence**:
+- Patterns become visible that weren't apparent when writing individual notes
+- Related ideas cluster together in the graph view
+- Your vault becomes a true "second brain" with organic structure
+
+## 🎨 Interface
+
+### Settings Panel
+
+Access settings through: Settings → Plugin Options → Auto Keyword Linker
+
+**Keywords & Variations Section**:
+- Visual list of all keywords
+- Add new keywords with the "+ Add Keyword" button
+- Edit any keyword, target, or variations inline
+- Delete unwanted keywords with the "Delete" button
+
+**General Settings Section**:
+- Toggle switches for all behavioural options
+- Text input for folder paths and templates
+- Helpful descriptions for each setting
+
+### Command Palette
+
+Access all features through Obsidian's command palette (Ctrl/Cmd + P):
+- `Auto Keyword Linker: Link keywords in current note`
+- `Auto Keyword Linker: Preview keyword linking in current note`
+- `Auto Keyword Linker: Link keywords in all notes`
+- `Auto Keyword Linker: Preview keyword linking in all notes`
+
+### Preview Modal
+
+When using preview commands, a modal displays:
+- **File name**: Which note(s) will be affected
+- **Link count**: How many links will be created
+- **Change list**: Each keyword with its target and surrounding context
+- **Action buttons**: Apply changes or cancel
+
+## ⚙️ Configuration Example
+
+Here's a complete example configuration for a personal vault:
+
+```javascript
+Keywords:
+1. Keyword: Alice Johnson
+   Target: People/Alice Johnson
+   Variations: Alice, A.J., AJ
+
+2. Keyword: Project Momentum
+   Target: Projects/Momentum Initiative
+   Variations: Momentum, Proj Momentum, momentum project
+
+3. Keyword: Machine Learning
+   Target: Concepts/Machine Learning
+   Variations: ML, machine learning, machine-learning
+
+Settings:
+- First occurrence only: Enabled
+- Case sensitive: Disabled
+- Auto-create notes: Enabled
+- New note folder: "People"
+- Auto-link on save: Enabled
+```
+
+With this setup:
+- Writing "met with Alice about Momentum" automatically becomes "met with [[People/Alice Johnson|Alice]] about [[Projects/Momentum Initiative|Momentum]]"
+- The "People/Alice Johnson" note shows backlinks to every mention across your vault
+- The graph view displays connections between people, projects, and concepts
+- New person notes are automatically created in the "People" folder when first mentioned
+
+## 🛡️ Safety Features
+
+### File Type Protection
+- **Markdown Only**: Processes only `.md` files
+- **Attachment Safety**: Completely ignores `.pdf`, `.docx`, `.png`, `.jpg`, and all other attachments
+- **Multiple Checks**: Validates file extension at multiple points to prevent errors
+
+### Content Protection
+- **Existing Links**: Never modifies text already inside `[[wiki links]]`
+- **Code Blocks**: Preserves code fences (```) and inline code (`)
+- **Markdown Links**: Respects `[text](url)` style links
+- **Image Links**: Doesn't interfere with `![[image.png]]` embeds
+
+### Duplicate Prevention
+- **Vault-Wide Search**: Checks entire vault before creating new notes
+- **Smart Linking**: Links to existing notes regardless of location
+- **No Duplicates**: Won't create "Note.md" if it exists anywhere in your vault
+
+## 📈 Best Practices
+
+### Starting Out
+
+1. **Start Small**: Begin with 5-10 important keywords (key people, projects, concepts)
+2. **Test with Preview**: Use preview mode to understand how the plugin works
+3. **Single Note First**: Test on one note before processing your entire vault
+4. **Review Settings**: Ensure "First occurrence only" is enabled for readability
+
+### Keyword Selection
+
+**Good Candidates**:
+- People's names (colleagues, authors, historical figures)
+- Project names
+- Core concepts in your field
+- Company or organisation names
+- Recurring topics or themes
+
+**Avoid**:
+- Common words ("the", "and", "is")
+- Words that appear in many contexts ("project", "meeting", "work")
+- Single letters (unless used as known abbreviations)
+
+### Variations Strategy
+
+**When to Use Variations**:
+- Multiple name formats: "Dr. Jane Smith", "Jane Smith", "J. Smith", "Jane"
+- Acronyms: "Machine Learning" → "ML"
+- Nicknames: "Robert" → "Bob", "Rob"
+- Alternative spellings: "Organisation" → "Organisation"
+
+**Keep it Reasonable**:
+- Don't add variations that might cause false matches
+- Be specific enough to avoid linking unrelated terms
+- Test variations with preview mode before bulk application
+
+### Folder Organisation
+
+Organise your vault with dedicated folders for different note types:
+
+```
+/People
+  - Alice Johnson.md
+  - Bob Smith.md
+/Projects
+  - Website Redesign.md
+  - Product Launch.md
+/Concepts
+  - Neural Networks.md
+  - Agile Methodology.md
+/Daily Notes
+  - 2025-01-15.md
+  - 2025-01-16.md
+```
+
+Set "New note folder" based on the type of keywords you're adding. For person keywords, use "People"; for project keywords, use "Projects".
+
+### Maintenance
+
+- **Regular Review**: Periodically review your keywords list and remove outdated entries
+- **Add as You Go**: When you notice yourself typing the same term repeatedly, add it as a keyword
+- **Graph Analysis**: Use Obsidian's graph view to identify important nodes that should become keywords
+- **Backlink Audit**: Check backlinks on key notes to ensure all important connections are being made
+
+## 🔧 Technical Details
+
+### How It Works
+
+1. **Keyword Map Building**: Creates a map of all keywords (including variations) pointing to target notes
+2. **Priority Sorting**: Sorts keywords by length (longest first) to avoid partial matches
+3. **Pattern Matching**: Uses regex with word boundaries to find exact matches
+4. **Context Checking**: Verifies each match isn't inside existing links or code
+5. **Safe Replacement**: Applies replacements in reverse order to preserve text positions
+6. **File Modification**: Uses Obsidian's API to safely modify files
+
+### Performance
+
+- **Efficient Processing**: Uses optimised regex patterns and early-exit logic
+- **Batch Operations**: Processes multiple files efficiently for bulk operations
+- **Memory Safe**: Processes files one at a time to manage memory usage
+- **Non-Blocking**: Operations are asynchronous and don't freeze the UI
+
+### Compatibility
+
+- **Obsidian Version**: Requires Obsidian v0.15.0 or higher
+- **Plugin API**: Uses official Obsidian API (no private APIs)
+- **Sync Compatible**: Works with Obsidian Sync, iCloud, and other sync solutions
+- **Cross-Platform**: Works on Windows, macOS, Linux, iOS, and Android
+
+## 🤝 Contributing
+
+Contributions are welcome! Areas for potential improvement:
+
+- Additional template variables
+- More sophisticated pattern matching options
+- Batch keyword import/export
+- Integration with other plugins
+- Performance optimisations
+
+## 📝 License
+
+Community - Free to use and enjoy.
+
+## 🐛 Bug Reports and Feature Requests
+
+If you encounter issues or have ideas for improvements, please:
+
+1. Check existing issues to avoid duplicates
+2. Provide clear reproduction steps for bugs
+3. Explain the use case for feature requests
+4. Include your Obsidian version and OS
+
+## 💡 Tips and Tricks
+
+### Tip 1: Use Auto-Link on Save for Seamless Workflow
+
+Enable "Auto-link on save" and forget about linking entirely. Just write naturally and save when you're done. Your graph builds itself.
+
+### Tip 2: Preview First, Apply Later
+
+When processing all notes for the first time, always use preview mode. This helps you catch:
+- Keywords that are too generic
+- Unexpected matches
+- Missing variations
+
+### Tip 3: Combine with Templates
+
+Use Obsidian's template plugin alongside Auto Keyword Linker. Create templates for meeting notes, daily notes, etc., then let Auto Keyword Linker handle the linking when you fill them out.
+
+### Tip 4: Regular Bulk Processing
+
+Even with auto-link on save, periodically run "Link keywords in all notes" to catch any notes you edited outside Obsidian or before adding new keywords.
+
+### Tip 5: Use Descriptive Target Names
+
+Instead of linking to "Note.md", link to "People/Alice Johnson.md" or "Projects/Website Redesign.md". This makes your backlinks and graph more informative.
+
+---
+
+**Built with ❤️ for the Obsidian community**
+
+Transform your note-taking workflow and watch your knowledge graph grow organically. Install Auto Keyword Linker today and experience the power of automated, intelligent linking.
