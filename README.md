@@ -16,6 +16,7 @@ One of the most powerful features of this plugin is its ability to **automatical
 - **Discover Hidden Connections**: Your graph view reveals relationships you might not have noticed manually
 - **Effortless Network Effects**: As you write naturally, your vault becomes increasingly interconnected without extra effort
 - **Rich Context**: Each note's backlinks section shows every mention across your vault, providing comprehensive context
+<img width="305" height="355" alt="image" src="https://github.com/user-attachments/assets/04e46ea2-533f-486a-8e94-68055eae8f55" />
 
 ### Time Savings
 
@@ -276,10 +277,13 @@ Access settings through: Settings → Plugin Options → Auto Keyword Linker
 - Edit any keyword, target, or variations inline
 - Delete unwanted keywords with the "Delete" button
 
+<img width="937" height="324" alt="image" src="https://github.com/user-attachments/assets/33cab387-b82c-43cd-bf18-7aa384aa8a66" />
+
 **General Settings Section**:
 - Toggle switches for all behavioural options
 - Text input for folder paths and templates
 - Helpful descriptions for each setting
+<img width="977" height="537" alt="image" src="https://github.com/user-attachments/assets/a0135476-5b17-4b47-bbe0-057a5579705c" />
 
 ### Command Palette
 
@@ -288,6 +292,8 @@ Access all features through Obsidian's command palette (Ctrl/Cmd + P):
 - `Auto Keyword Linker: Preview keyword linking in current note`
 - `Auto Keyword Linker: Link keywords in all notes`
 - `Auto Keyword Linker: Preview keyword linking in all notes`
+
+<img width="886" height="315" alt="image" src="https://github.com/user-attachments/assets/08d1aee9-485c-4c1e-ad54-4794bd73c760" />
 
 ### Preview Modal
 
