@@ -247,26 +247,26 @@ module.exports = class AutoKeywordLinker extends Plugin {
     async linkKeywordsInAllNotes(preview = false) {
         // Get all markdown files in the vault
         const files = this.app.vault.getMarkdownFiles();
-        
+
         // Initialize counters
         let totalLinks = 0;        // Total number of links created
         let filesModified = 0;     // Number of files that were changed
         let previewResults = [];   // Array to store preview results
-        
-        // Process each file
+
+        // Process each file - note we're NOT using skipTags, so tags will be added immediately
         for (let file of files) {
             // CRITICAL FIX: Skip non-markdown files (attachments, etc.)
             if (file.extension !== 'md') {
                 continue;
             }
-            
+
             const results = await this.linkKeywordsInFile(file, preview);
-            
+
             // If changes were made to this file
             if (results && results.changed) {
                 filesModified++;
                 totalLinks += results.linkCount;
-                
+
                 // If in preview mode, store results for the preview modal
                 if (preview) {
                     previewResults.push({
@@ -276,7 +276,7 @@ module.exports = class AutoKeywordLinker extends Plugin {
                 }
             }
         }
-        
+
         // Update statistics if not preview mode
         if (!preview && filesModified > 0) {
             this.settings.statistics.totalLinksCreated += totalLinks;
@@ -284,15 +284,15 @@ module.exports = class AutoKeywordLinker extends Plugin {
             this.settings.statistics.lastRunDate = new Date().toISOString();
             await this.saveSettings();
         }
-        
+
         // If preview mode and we have results, show bulk preview modal
         if (preview && previewResults.length > 0) {
             new BulkPreviewModal(this.app, previewResults, this).open();
-        } 
+        }
         // If preview mode but no results, inform user
         else if (preview) {
             new Notice('No keywords found to link in any notes');
-        } 
+        }
         // If not preview mode, show summary of changes
         else {
             new Notice(`Linked ${totalLinks} keyword(s) in ${filesModified} note(s)!`);
@@ -1251,17 +1251,61 @@ class ImportModal extends Modal {
                         return;
                     }
                     
-                    // Add imported keywords to existing ones
+                    // Add imported keywords to existing ones, checking for duplicates
+                    let addedCount = 0;
+                    let mergedCount = 0;
+
                     for (let item of imported) {
                         // Ensure enableTags field exists
                         if (item.enableTags === undefined) {
                             item.enableTags = false;
                         }
-                        this.plugin.settings.keywords.push(item);
+
+                        // Check if this keyword already exists (case-insensitive)
+                        const existingIndex = this.plugin.settings.keywords.findIndex(
+                            k => k.keyword.toLowerCase() === item.keyword.toLowerCase()
+                        );
+
+                        if (existingIndex !== -1) {
+                            // Keyword exists - merge variations
+                            const existing = this.plugin.settings.keywords[existingIndex];
+
+                            // Ensure variations arrays exist
+                            if (!existing.variations) existing.variations = [];
+                            if (!item.variations) item.variations = [];
+
+                            // Merge variations, avoiding duplicates (case-insensitive)
+                            const existingVariationsLower = existing.variations.map(v => v.toLowerCase());
+                            const newVariations = item.variations.filter(
+                                v => !existingVariationsLower.includes(v.toLowerCase())
+                            );
+
+                            if (newVariations.length > 0) {
+                                existing.variations.push(...newVariations);
+                                mergedCount++;
+                            }
+                        } else {
+                            // New keyword - add it
+                            this.plugin.settings.keywords.push(item);
+                            addedCount++;
+                        }
                     }
                     
                     await this.plugin.saveSettings();
-                    new Notice(`Imported ${imported.length} keyword(s)`);
+
+                    // Build informative message
+                    let message = '';
+                    if (addedCount > 0 && mergedCount > 0) {
+                        message = `Imported: ${addedCount} new keyword(s), merged variations into ${mergedCount} existing keyword(s)`;
+                    } else if (addedCount > 0) {
+                        message = `Imported ${addedCount} new keyword(s)`;
+                    } else if (mergedCount > 0) {
+                        message = `Merged variations into ${mergedCount} existing keyword(s)`;
+                    } else {
+                        message = `No new keywords or variations to import`;
+                    }
+
+                    new Notice(message);
                     this.close();
                     
                     // Refresh settings tab if open
