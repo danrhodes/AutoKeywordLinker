@@ -1,4 +1,5 @@
-# Auto Keyword Linker - Feature List v2.0.1
+# Auto Keyword Linker - Feature List
+v2.0.2
 
 ## Core Linking Features
 

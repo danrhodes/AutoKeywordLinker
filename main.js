@@ -1503,36 +1503,53 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         const {containerEl} = this;
         containerEl.empty();  // Clear any existing content
 
-        // Main heading
-        containerEl.createEl('h2', {text: 'Auto Keyword Linker Settings'});
+        // Add custom CSS for improved UI
+        this.addCustomStyles();
 
-        // Keywords section
-        containerEl.createEl('h3', {text: 'Keywords & Variations'});
-        containerEl.createEl('p', {text: 'Define keywords and their variations. All variations will link to the target note.'});
+        // Main heading with stats
+        const headerDiv = containerEl.createDiv({cls: 'akl-header'});
+        headerDiv.createEl('h2', {text: 'Auto Keyword Linker Settings'});
+        const statsSpan = headerDiv.createEl('span', {
+            cls: 'akl-stats',
+            text: `${this.plugin.settings.keywords.length} keyword${this.plugin.settings.keywords.length !== 1 ? 's' : ''} configured`
+        });
+
+        // Keywords section with improved header
+        const keywordsHeader = containerEl.createDiv({cls: 'akl-section-header'});
+        keywordsHeader.createEl('h3', {text: 'Keywords & Variations'});
+        keywordsHeader.createEl('p', {
+            text: 'Define keywords and their variations. All variations will link to the target note.',
+            cls: 'akl-section-desc'
+        });
 
         // Container for keyword list
-        const keywordsDiv = containerEl.createDiv({cls: 'keywords-container'});
-        
+        const keywordsDiv = containerEl.createDiv({cls: 'akl-keywords-container'});
+
         // Render all current keywords
         this.renderKeywords(keywordsDiv);
 
         // Add button to create new keyword entries
-        const addBtn = containerEl.createEl('button', {text: '+ Add Keyword'});
-        addBtn.style.marginTop = '10px';
+        const addBtnContainer = containerEl.createDiv({cls: 'akl-add-button-container'});
+        const addBtn = addBtnContainer.createEl('button', {
+            text: '+ Add Keyword',
+            cls: 'mod-cta akl-add-button'
+        });
         addBtn.addEventListener('click', () => {
             // Add empty keyword object to settings
             this.plugin.settings.keywords.push({
                 keyword: '',
                 target: '',
                 variations: [],
-                enableTags: false
+                enableTags: false,
+                collapsed: false
             });
             // Re-render the display to show new entry
             this.display();
         });
 
         // General settings section
-        containerEl.createEl('h3', {text: 'General Settings'});
+        const generalHeader = containerEl.createDiv({cls: 'akl-section-header'});
+        generalHeader.createEl('h3', {text: 'General Settings'});
 
         // First occurrence only toggle
         new Setting(containerEl)
@@ -1614,70 +1631,149 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         // Iterate through all keyword entries
         for (let i = 0; i < this.plugin.settings.keywords.length; i++) {
             const item = this.plugin.settings.keywords[i];
-            
-            // Create container for this keyword entry with border
-            const itemDiv = container.createDiv({cls: 'keyword-item'});
-            itemDiv.style.border = '1px solid var(--background-modifier-border)';
-            itemDiv.style.padding = '10px';
-            itemDiv.style.marginBottom = '10px';
-            itemDiv.style.borderRadius = '5px';
+
+            // Initialize collapsed state if not set
+            if (item.collapsed === undefined) {
+                item.collapsed = false;
+            }
+
+            // Create card container for this keyword entry
+            const cardDiv = container.createDiv({cls: 'akl-keyword-card'});
+
+            // Card header with collapse toggle
+            const cardHeader = cardDiv.createDiv({cls: 'akl-card-header'});
+
+            // Collapse toggle button
+            const collapseBtn = cardHeader.createDiv({cls: 'akl-collapse-btn'});
+            collapseBtn.innerHTML = item.collapsed ? '▶' : '▼';
+            collapseBtn.setAttribute('aria-label', item.collapsed ? 'Expand' : 'Collapse');
+            collapseBtn.addEventListener('click', async () => {
+                item.collapsed = !item.collapsed;
+                await this.plugin.saveSettings();
+                this.display();
+            });
+
+            // Card title area
+            const cardTitle = cardHeader.createDiv({cls: 'akl-card-title'});
+            const titleText = item.keyword || 'New Keyword';
+            const targetText = item.target ? ` → ${item.target}` : '';
+            cardTitle.createSpan({text: titleText, cls: 'akl-keyword-name'});
+            if (targetText) {
+                cardTitle.createSpan({text: targetText, cls: 'akl-target-name'});
+            }
+
+            // Card badges
+            const cardBadges = cardHeader.createDiv({cls: 'akl-card-badges'});
+            if (item.enableTags) {
+                cardBadges.createSpan({text: 'Tags', cls: 'akl-badge akl-badge-tags'});
+            }
+            if (item.variations && item.variations.length > 0) {
+                cardBadges.createSpan({
+                    text: `${item.variations.length} var`,
+                    cls: 'akl-badge akl-badge-variations'
+                });
+            }
+
+            // Card body (collapsible)
+            const cardBody = cardDiv.createDiv({cls: 'akl-card-body'});
+            if (item.collapsed) {
+                cardBody.style.display = 'none';
+            }
 
             // Keyword input field
-            new Setting(itemDiv)
+            new Setting(cardBody)
                 .setName('Keyword')
-                .setDesc('The text to search for')
-                .addText(text => text
-                    .setValue(item.keyword)
-                    .onChange(async (value) => {
-                        this.plugin.settings.keywords[i].keyword = value;
-                        // If target is empty, auto-fill it with the keyword
-                        if (!this.plugin.settings.keywords[i].target) {
-                            this.plugin.settings.keywords[i].target = value;
-                        }
-                        await this.plugin.saveSettings();
-                    }));
+                .setDesc('The text to search for in your notes')
+                .addText(text => {
+                    text.setValue(item.keyword)
+                        .setPlaceholder('Enter keyword...')
+                        .onChange(async (value) => {
+                            this.plugin.settings.keywords[i].keyword = value;
+                            // If target is empty, auto-fill it with the keyword
+                            if (!this.plugin.settings.keywords[i].target) {
+                                this.plugin.settings.keywords[i].target = value;
+                            }
+                            await this.plugin.saveSettings();
+                            // Update card header title
+                            this.display();
+                        });
+                    text.inputEl.addClass('akl-input');
+                });
 
             // Target note input field
-            new Setting(itemDiv)
+            new Setting(cardBody)
                 .setName('Target note')
-                .setDesc('The note name to link to')
-                .addText(text => text
-                    .setValue(item.target)
-                    .onChange(async (value) => {
-                        this.plugin.settings.keywords[i].target = value;
-                        await this.plugin.saveSettings();
-                    }));
+                .setDesc('The note name to create links to')
+                .addText(text => {
+                    text.setValue(item.target)
+                        .setPlaceholder('Target note name...')
+                        .onChange(async (value) => {
+                            this.plugin.settings.keywords[i].target = value;
+                            await this.plugin.saveSettings();
+                            this.display();
+                        });
+                    text.inputEl.addClass('akl-input');
+                });
 
-            // Variations text area (comma-separated)
-            new Setting(itemDiv)
-                .setName('Variations')
-                .setDesc('Alternative spellings that also link to target (comma-separated)')
-                .addTextArea(text => text
-                    .setPlaceholder('Variation1,Variation2')
-                    .setValue(item.variations ? item.variations.join(', ') : '')
-                    .onChange(async (value) => {
-                        // Parse comma-separated list into array
-                        this.plugin.settings.keywords[i].variations = value
-                            .split(',')
-                            .map(v => v.trim())  // Remove whitespace
-                            .filter(v => v.length > 0);  // Remove empty strings
-                        await this.plugin.saveSettings();
-                    }));
+            // Variations with chip-style interface
+            const variationsContainer = cardBody.createDiv({cls: 'akl-variations-section'});
+            variationsContainer.createEl('div', {
+                text: 'Variations',
+                cls: 'setting-item-name'
+            });
+            variationsContainer.createEl('div', {
+                text: 'Alternative spellings that also link to the target note',
+                cls: 'setting-item-description'
+            });
 
-            // Enable tags checkbox
-            new Setting(itemDiv)
+            // Chips display area
+            const chipsContainer = variationsContainer.createDiv({cls: 'akl-chips-container'});
+            this.renderVariationChips(chipsContainer, item.variations || [], i);
+
+            // Input for adding new variations
+            const addVariationContainer = variationsContainer.createDiv({cls: 'akl-add-variation'});
+            const variationInput = addVariationContainer.createEl('input', {
+                type: 'text',
+                placeholder: 'Type and press Enter to add...',
+                cls: 'akl-variation-input'
+            });
+
+            variationInput.addEventListener('keydown', async (e) => {
+                if (e.key === 'Enter' && variationInput.value.trim()) {
+                    e.preventDefault();
+                    const newVariation = variationInput.value.trim();
+                    if (!item.variations) {
+                        item.variations = [];
+                    }
+                    if (!item.variations.includes(newVariation)) {
+                        item.variations.push(newVariation);
+                        await this.plugin.saveSettings();
+                        this.display();
+                    }
+                    variationInput.value = '';
+                }
+            });
+
+            // Enable tags toggle
+            new Setting(cardBody)
                 .setName('Enable tags')
-                .setDesc('Add tags to both the source and target notes when this keyword is linked')
+                .setDesc('Automatically add tags to source and target notes')
                 .addToggle(toggle => toggle
                     .setValue(item.enableTags || false)
                     .onChange(async (value) => {
                         this.plugin.settings.keywords[i].enableTags = value;
                         await this.plugin.saveSettings();
+                        this.display();
                     }));
 
-            // Delete button for this keyword entry
-            const deleteBtn = itemDiv.createEl('button', {text: 'Delete', cls: 'mod-warning'});
-            deleteBtn.style.marginTop = '10px';
+            // Card footer with actions
+            const cardFooter = cardBody.createDiv({cls: 'akl-card-footer'});
+
+            // Delete button
+            const deleteBtn = cardFooter.createEl('button', {
+                text: 'Delete Keyword',
+                cls: 'akl-delete-btn'
+            });
             deleteBtn.addEventListener('click', async () => {
                 // Remove this keyword from the array
                 this.plugin.settings.keywords.splice(i, 1);
@@ -1686,5 +1782,387 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 this.display();
             });
         }
+    }
+
+    /**
+     * Render variation chips with remove buttons
+     * @param {HTMLElement} container - Container for chips
+     * @param {Array} variations - Array of variation strings
+     * @param {number} keywordIndex - Index of the keyword in settings
+     */
+    renderVariationChips(container, variations, keywordIndex) {
+        container.empty();
+
+        if (variations.length === 0) {
+            container.createSpan({
+                text: 'No variations added yet',
+                cls: 'akl-no-variations'
+            });
+            return;
+        }
+
+        variations.forEach((variation, varIndex) => {
+            const chip = container.createDiv({cls: 'akl-chip'});
+            chip.createSpan({text: variation, cls: 'akl-chip-text'});
+
+            const removeBtn = chip.createSpan({text: '×', cls: 'akl-chip-remove'});
+            removeBtn.setAttribute('aria-label', `Remove ${variation}`);
+            removeBtn.addEventListener('click', async () => {
+                this.plugin.settings.keywords[keywordIndex].variations.splice(varIndex, 1);
+                await this.plugin.saveSettings();
+                this.display();
+            });
+        });
+    }
+
+    /**
+     * Add custom CSS styles for the improved UI
+     */
+    addCustomStyles() {
+        // Check if styles already exist
+        if (document.getElementById('akl-custom-styles')) {
+            return;
+        }
+
+        const styleEl = document.createElement('style');
+        styleEl.id = 'akl-custom-styles';
+        styleEl.textContent = `
+            /* Header */
+            .akl-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 1.5em;
+                flex-wrap: wrap;
+                gap: 0.5em;
+            }
+
+            .akl-stats {
+                color: var(--text-muted);
+                font-size: 0.9em;
+                padding: 0.25em 0.75em;
+                background: var(--background-secondary);
+                border-radius: 12px;
+            }
+
+            /* Section Headers */
+            .akl-section-header {
+                margin-top: 2em;
+                margin-bottom: 1em;
+            }
+
+            .akl-section-header h3 {
+                margin-bottom: 0.25em;
+            }
+
+            .akl-section-desc {
+                color: var(--text-muted);
+                margin-top: 0;
+            }
+
+            /* Keywords Container */
+            .akl-keywords-container {
+                display: grid;
+                gap: 1em;
+                margin-bottom: 1em;
+            }
+
+            /* Keyword Card */
+            .akl-keyword-card {
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 8px;
+                background: var(--background-primary);
+                overflow: hidden;
+                transition: box-shadow 0.2s ease, transform 0.2s ease;
+            }
+
+            .akl-keyword-card:hover {
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            }
+
+            /* Card Header */
+            .akl-card-header {
+                display: flex;
+                align-items: center;
+                gap: 0.75em;
+                padding: 1em;
+                background: var(--background-secondary);
+                cursor: pointer;
+                border-bottom: 1px solid var(--background-modifier-border);
+            }
+
+            .akl-card-header:hover {
+                background: var(--background-modifier-hover);
+            }
+
+            .akl-collapse-btn {
+                font-size: 0.8em;
+                color: var(--text-muted);
+                user-select: none;
+                flex-shrink: 0;
+                width: 20px;
+                text-align: center;
+            }
+
+            .akl-card-title {
+                flex: 1;
+                display: flex;
+                align-items: center;
+                gap: 0.5em;
+                font-weight: 500;
+                flex-wrap: wrap;
+            }
+
+            .akl-keyword-name {
+                color: var(--text-normal);
+                font-size: 1.05em;
+            }
+
+            .akl-target-name {
+                color: var(--text-muted);
+                font-size: 0.9em;
+            }
+
+            .akl-card-badges {
+                display: flex;
+                gap: 0.5em;
+                flex-wrap: wrap;
+            }
+
+            .akl-badge {
+                padding: 0.25em 0.6em;
+                border-radius: 10px;
+                font-size: 0.75em;
+                font-weight: 500;
+                white-space: nowrap;
+            }
+
+            .akl-badge-tags {
+                background: var(--color-accent);
+                color: white;
+            }
+
+            .akl-badge-variations {
+                background: var(--background-modifier-border);
+                color: var(--text-muted);
+            }
+
+            /* Card Body */
+            .akl-card-body {
+                padding: 1em;
+            }
+
+            .akl-card-body .setting-item {
+                border: none;
+                padding: 0.75em 0;
+            }
+
+            .akl-input {
+                width: 100%;
+            }
+
+            /* Variations Section */
+            .akl-variations-section {
+                padding: 0.75em 0;
+                border-top: 1px solid var(--background-modifier-border);
+                margin-top: 0.5em;
+            }
+
+            .akl-variations-section .setting-item-name {
+                font-weight: 500;
+                margin-bottom: 0.25em;
+            }
+
+            .akl-variations-section .setting-item-description {
+                color: var(--text-muted);
+                font-size: 0.85em;
+                margin-bottom: 0.75em;
+            }
+
+            .akl-chips-container {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.5em;
+                margin-bottom: 0.75em;
+                min-height: 2em;
+                align-items: center;
+            }
+
+            .akl-chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.4em;
+                padding: 0.35em 0.7em;
+                background: var(--background-secondary);
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 14px;
+                font-size: 0.9em;
+                transition: background-color 0.2s ease;
+            }
+
+            .akl-chip:hover {
+                background: var(--background-modifier-hover);
+            }
+
+            .akl-chip-text {
+                color: var(--text-normal);
+            }
+
+            .akl-chip-remove {
+                color: var(--text-muted);
+                font-size: 1.2em;
+                line-height: 1;
+                cursor: pointer;
+                padding: 0 0.2em;
+                border-radius: 50%;
+                transition: color 0.2s ease, background-color 0.2s ease;
+            }
+
+            .akl-chip-remove:hover {
+                color: var(--text-error);
+                background: var(--background-modifier-error);
+            }
+
+            .akl-no-variations {
+                color: var(--text-muted);
+                font-style: italic;
+                font-size: 0.9em;
+            }
+
+            .akl-add-variation {
+                margin-top: 0.5em;
+            }
+
+            .akl-variation-input {
+                width: 100%;
+                padding: 0.5em;
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 4px;
+                background: var(--background-primary);
+                color: var(--text-normal);
+                font-size: 0.9em;
+            }
+
+            .akl-variation-input:focus {
+                border-color: var(--color-accent);
+                outline: none;
+            }
+
+            /* Card Footer */
+            .akl-card-footer {
+                display: flex;
+                justify-content: flex-end;
+                padding-top: 0.75em;
+                margin-top: 0.75em;
+                border-top: 1px solid var(--background-modifier-border);
+            }
+
+            .akl-delete-btn {
+                padding: 0.5em 1em;
+                background: transparent;
+                color: var(--text-error);
+                border: 1px solid var(--text-error);
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 0.9em;
+                transition: background-color 0.2s ease, color 0.2s ease;
+            }
+
+            .akl-delete-btn:hover {
+                background: var(--text-error);
+                color: white;
+            }
+
+            /* Add Button Container */
+            .akl-add-button-container {
+                display: flex;
+                justify-content: center;
+                margin: 1.5em 0;
+            }
+
+            .akl-add-button {
+                padding: 0.75em 1.5em;
+                font-size: 1em;
+            }
+
+            /* Responsive Design */
+            @media (min-width: 768px) {
+                .akl-keywords-container {
+                    grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
+                }
+            }
+
+            @media (max-width: 767px) {
+                /* Keep everything on one line on narrow screens */
+                .akl-card-header {
+                    flex-wrap: nowrap;
+                    padding: 0.75em 0.5em;
+                    gap: 0.4em;
+                }
+
+                .akl-collapse-btn {
+                    font-size: 0.7em;
+                    width: 16px;
+                }
+
+                .akl-card-title {
+                    flex: 1;
+                    min-width: 0;
+                    overflow: hidden;
+                }
+
+                .akl-keyword-name {
+                    font-size: 0.9em;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    max-width: 100%;
+                }
+
+                .akl-target-name {
+                    font-size: 0.8em;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+
+                .akl-card-badges {
+                    flex-shrink: 0;
+                }
+
+                .akl-badge {
+                    padding: 0.2em 0.4em;
+                    font-size: 0.65em;
+                }
+
+                .akl-header {
+                    flex-direction: column;
+                    align-items: flex-start;
+                }
+            }
+
+            /* Dark mode adjustments */
+            .theme-dark .akl-keyword-card:hover {
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            }
+
+            /* Animations */
+            @keyframes slideIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(-10px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+
+            .akl-keyword-card {
+                animation: slideIn 0.2s ease-out;
+            }
+        `;
+
+        document.head.appendChild(styleEl);
     }
 }
