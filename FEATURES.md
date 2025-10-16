@@ -1,5 +1,5 @@
 # Auto Keyword Linker - Feature List
-v2.0.2
+v2.0.3
 
 ## Core Linking Features
 
@@ -8,6 +8,10 @@ v2.0.2
 - Case-sensitive and case-insensitive matching modes
 - First occurrence only mode (link once per note)
 - Word boundary detection (matches whole words only)
+
+## Suggest new keywords from notes
+
+- Automatically scan for and add new keywords and or variations from analysing your notes
 
 ## Smart Content Detection
 
