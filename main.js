@@ -1,6 +1,23 @@
 // Import required Obsidian API components
 const { Plugin, PluginSettingTab, Setting, Notice, Modal, MarkdownView } = require('obsidian');
 
+// Stop words to exclude from keyword suggestions
+const STOP_WORDS = new Set([
+    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he', 'in', 'is', 'it',
+    'its', 'of', 'on', 'that', 'the', 'to', 'was', 'will', 'with', 'the', 'this', 'but', 'they',
+    'have', 'had', 'what', 'when', 'where', 'who', 'which', 'why', 'how', 'all', 'each', 'every',
+    'both', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own',
+    'same', 'so', 'than', 'too', 'very', 'can', 'will', 'just', 'should', 'now', 'my', 'me', 'we',
+    'us', 'our', 'your', 'their', 'his', 'her', 'i', 'you', 'do', 'does', 'did', 'am', 'been',
+    'being', 'get', 'got', 'if', 'or', 'may', 'could', 'would', 'should', 'might', 'must', 'one',
+    'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'there', 'then', 'these',
+    'those', 'also', 'any', 'about', 'after', 'again', 'before', 'because', 'between', 'during',
+    'through', 'under', 'over', 'above', 'below', 'up', 'down', 'out', 'off', 'into', 'since',
+    'until', 'while', 'once', 'here', 'there', 'see', 'saw', 'seen', 'go', 'goes', 'going', 'gone',
+    'went', 'want', 'wanted', 'make', 'made', 'use', 'used', 'using', 'day', 'days', 'way', 'ways',
+    'thing', 'things', 'yes', 'no', 'okay', 'ok'
+]);
+
 // Default settings that will be used when the plugin is first installed
 const DEFAULT_SETTINGS = {
     // Array of keyword objects, each containing the keyword, target note, and variations
@@ -31,6 +48,9 @@ module.exports = class AutoKeywordLinker extends Plugin {
     async onload() {
         // Load saved settings from disk (or use defaults if none exist)
         await this.loadSettings();
+
+        // Set up file watcher to detect settings changes from sync
+        this.setupSettingsWatcher();
 
         // Register command: Link keywords in the currently active note
         this.addCommand({
@@ -81,6 +101,13 @@ module.exports = class AutoKeywordLinker extends Plugin {
             callback: () => this.importKeywords()
         });
 
+        // Register command: Suggest keywords
+        this.addCommand({
+            id: 'suggest-keywords',
+            name: 'Suggest keywords from notes',
+            callback: () => this.suggestKeywords()
+        });
+
         // Add the settings tab to Obsidian's settings panel
         this.addSettingTab(new AutoKeywordLinkerSettingTab(this.app, this));
 
@@ -95,6 +122,75 @@ module.exports = class AutoKeywordLinker extends Plugin {
      */
     showStatistics() {
         new StatisticsModal(this.app, this.settings).open();
+    }
+
+    /**
+     * Set up file watcher to detect settings changes from sync
+     * This allows the plugin to automatically reload settings when synced from other devices
+     */
+    setupSettingsWatcher() {
+        // Track if we're currently saving to prevent reload loops
+        this.isSaving = false;
+
+        // Use polling to check for settings changes since vault events don't fire for .obsidian files
+        // Store the last known state of the settings
+        let lastSettingsHash = JSON.stringify(this.settings.keywords);
+
+        // Check for changes every 2 seconds
+        this.registerInterval(
+            window.setInterval(async () => {
+                if (this.isSaving) {
+                    // Skip check if we're currently saving
+                    return;
+                }
+
+                try {
+                    // Load the current data from disk
+                    const diskData = await this.loadData();
+
+                    if (diskData && diskData.keywords) {
+                        const currentHash = JSON.stringify(diskData.keywords);
+
+                        // Compare with our last known state
+                        if (currentHash !== lastSettingsHash) {
+                            console.log('Auto Keyword Linker: Settings changed externally, reloading...');
+
+                            // Update our settings
+                            this.settings = Object.assign({}, DEFAULT_SETTINGS, diskData);
+
+                            // Ensure statistics object exists
+                            if (!this.settings.statistics) {
+                                this.settings.statistics = DEFAULT_SETTINGS.statistics;
+                            }
+
+                            // Ensure enableTags field exists for all keywords
+                            if (this.settings.keywords) {
+                                for (let keyword of this.settings.keywords) {
+                                    if (keyword.enableTags === undefined) {
+                                        keyword.enableTags = false;
+                                    }
+                                }
+                            }
+
+                            // Update our hash
+                            lastSettingsHash = currentHash;
+
+                            // If settings tab is open, refresh it
+                            const settingTab = this.app.setting?.activeTab;
+                            if (settingTab instanceof AutoKeywordLinkerSettingTab) {
+                                settingTab.display();
+                            }
+
+                            // Show a notice to inform the user
+                            new Notice('Auto Keyword Linker: Settings synced from another device');
+                        }
+                    }
+                } catch (error) {
+                    // Ignore errors - file might be temporarily unavailable during sync
+                    console.log('Auto Keyword Linker: Error checking for settings changes:', error);
+                }
+            }, 2000) // Check every 2 seconds
+        );
     }
 
     /**
@@ -119,6 +215,210 @@ module.exports = class AutoKeywordLinker extends Plugin {
      */
     async importKeywords() {
         new ImportModal(this.app, this).open();
+    }
+
+    /**
+     * Open the Suggested Keyword Builder modal
+     */
+    async suggestKeywords() {
+        new SuggestedKeywordBuilderModal(this.app, this).open();
+    }
+
+    /**
+     * Extract meaningful words from text
+     * @param {string} text - Text to extract words from
+     * @param {boolean} isTitle - Whether this is a title (affects processing)
+     * @returns {Array} Array of normalized words
+     */
+    extractWordsFromText(text, isTitle = false) {
+        const words = [];
+
+        // Split by common delimiters
+        let parts = text.split(/[\s\-_\/\\,;:]+/);
+
+        for (let part of parts) {
+            // Handle camelCase and PascalCase
+            const subParts = part.split(/(?=[A-Z])/).filter(p => p.length > 0);
+
+            for (let subPart of subParts) {
+                // Clean and normalize
+                let word = subPart.trim()
+                    .replace(/[^\w\s]/g, '') // Remove special chars
+                    .trim();
+
+                if (word.length === 0) continue;
+
+                // Normalize to Title Case
+                word = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+
+                // Filter out stop words and short words
+                if (word.length >= 3 && !STOP_WORDS.has(word.toLowerCase())) {
+                    words.push(word);
+                }
+            }
+        }
+
+        return words;
+    }
+
+    /**
+     * Extract meaningful phrases (2-4 words) from text
+     * @param {string} text - Text to extract phrases from
+     * @returns {Array} Array of normalized phrases
+     */
+    extractPhrasesFromText(text) {
+        const phrases = [];
+
+        // Split into sentences/lines
+        const lines = text.split(/[.\n]/);
+
+        for (let line of lines) {
+            // Extract capitalized words (likely proper nouns/important terms)
+            const words = line.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/g);
+
+            if (words) {
+                for (let phrase of words) {
+                    phrase = phrase.trim();
+
+                    // Check if phrase contains stop words only
+                    const phraseWords = phrase.split(/\s+/);
+                    const hasNonStopWord = phraseWords.some(w => !STOP_WORDS.has(w.toLowerCase()));
+
+                    if (hasNonStopWord && phrase.length >= 5) {
+                        phrases.push(phrase);
+                    }
+                }
+            }
+        }
+
+        return phrases;
+    }
+
+    /**
+     * Analyze notes in the vault and extract keyword suggestions
+     * @returns {Array} Array of suggestion objects with word, count, and notes
+     */
+    async analyzeNotesForKeywords() {
+        const files = this.app.vault.getMarkdownFiles();
+        const wordFrequency = new Map(); // word -> { count, notes: Set }
+        const phraseFrequency = new Map(); // phrase -> { count, notes: Set }
+
+        // Get existing keywords (normalized to lowercase for comparison)
+        const existingKeywords = new Set(
+            this.settings.keywords.map(k => k.keyword.toLowerCase())
+        );
+
+        // Add variations to existing keywords set
+        for (let item of this.settings.keywords) {
+            if (item.variations && item.variations.length > 0) {
+                for (let variation of item.variations) {
+                    existingKeywords.add(variation.toLowerCase());
+                }
+            }
+        }
+
+        // Process each file
+        for (let file of files) {
+            // Extract from note title
+            const titleWords = this.extractWordsFromText(file.basename, true);
+            const titlePhrases = this.extractPhrasesFromText(file.basename);
+
+            // Add title words (weighted 3x)
+            for (let word of titleWords) {
+                if (!existingKeywords.has(word.toLowerCase())) {
+                    if (!wordFrequency.has(word)) {
+                        wordFrequency.set(word, { count: 0, notes: new Set() });
+                    }
+                    const data = wordFrequency.get(word);
+                    data.count += 3; // Weight title words higher
+                    data.notes.add(file.basename);
+                }
+            }
+
+            // Add title phrases (weighted 3x)
+            for (let phrase of titlePhrases) {
+                if (!existingKeywords.has(phrase.toLowerCase())) {
+                    if (!phraseFrequency.has(phrase)) {
+                        phraseFrequency.set(phrase, { count: 0, notes: new Set() });
+                    }
+                    const data = phraseFrequency.get(phrase);
+                    data.count += 3;
+                    data.notes.add(file.basename);
+                }
+            }
+
+            // Extract from note content (first 5000 chars)
+            try {
+                const content = await this.app.vault.read(file);
+                const limitedContent = content.substring(0, 5000);
+
+                // Remove frontmatter
+                const contentWithoutFrontmatter = limitedContent.replace(/^---[\s\S]*?---\n/, '');
+
+                const contentWords = this.extractWordsFromText(contentWithoutFrontmatter, false);
+                const contentPhrases = this.extractPhrasesFromText(contentWithoutFrontmatter);
+
+                // Add content words (normal weight)
+                for (let word of contentWords) {
+                    if (!existingKeywords.has(word.toLowerCase())) {
+                        if (!wordFrequency.has(word)) {
+                            wordFrequency.set(word, { count: 0, notes: new Set() });
+                        }
+                        const data = wordFrequency.get(word);
+                        data.count += 1;
+                        data.notes.add(file.basename);
+                    }
+                }
+
+                // Add content phrases (normal weight)
+                for (let phrase of contentPhrases) {
+                    if (!existingKeywords.has(phrase.toLowerCase())) {
+                        if (!phraseFrequency.has(phrase)) {
+                            phraseFrequency.set(phrase, { count: 0, notes: new Set() });
+                        }
+                        const data = phraseFrequency.get(phrase);
+                        data.count += 1;
+                        data.notes.add(file.basename);
+                    }
+                }
+            } catch (error) {
+                // Skip files that can't be read
+                console.log(`Error reading ${file.path}:`, error);
+            }
+        }
+
+        // Combine words and phrases into suggestions
+        const suggestions = [];
+
+        // Add word suggestions
+        for (let [word, data] of wordFrequency) {
+            suggestions.push({
+                keyword: word,
+                count: data.count,
+                notes: Array.from(data.notes).slice(0, 5), // Show max 5 notes
+                totalNotes: data.notes.size
+            });
+        }
+
+        // Add phrase suggestions
+        for (let [phrase, data] of phraseFrequency) {
+            suggestions.push({
+                keyword: phrase,
+                count: data.count,
+                notes: Array.from(data.notes).slice(0, 5),
+                totalNotes: data.notes.size
+            });
+        }
+
+        // Sort by count (descending) then by keyword length (descending)
+        suggestions.sort((a, b) => {
+            if (b.count !== a.count) {
+                return b.count - a.count;
+            }
+            return b.keyword.length - a.keyword.length;
+        });
+
+        return suggestions;
     }
 
     /**
@@ -1126,7 +1426,12 @@ module.exports = class AutoKeywordLinker extends Plugin {
      * Save plugin settings to disk
      */
     async saveSettings() {
+        this.isSaving = true;
         await this.saveData(this.settings);
+        // Reset flag after a short delay to ensure the modify event has been processed
+        setTimeout(() => {
+            this.isSaving = false;
+        }, 100);
     }
 }
 
@@ -1181,6 +1486,250 @@ class StatisticsModal extends Modal {
         const closeBtn = contentEl.createEl('button', {text: 'Close'});
         closeBtn.style.marginTop = '20px';
         closeBtn.addEventListener('click', () => this.close());
+    }
+
+    onClose() {
+        const {contentEl} = this;
+        contentEl.empty();
+    }
+}
+
+/**
+ * Suggested Keyword Builder Modal
+ * Analyzes notes and suggests keywords to add
+ */
+class SuggestedKeywordBuilderModal extends Modal {
+    constructor(app, plugin) {
+        super(app);
+        this.plugin = plugin;
+        this.suggestions = [];
+        this.selectedSuggestions = new Map(); // keyword -> { selected: boolean, addAsVariationTo: string|null }
+        this.isAnalyzing = true;
+        this.searchQuery = '';
+    }
+
+    async onOpen() {
+        const {contentEl} = this;
+        contentEl.addClass('akl-suggestion-modal');
+
+        // Title
+        contentEl.createEl('h2', {text: 'Suggested Keyword Builder'});
+
+        // Status area
+        const statusEl = contentEl.createDiv({cls: 'akl-status'});
+        statusEl.createEl('p', {text: 'Analyzing your notes...', cls: 'akl-analyzing'});
+
+        // Start analysis
+        try {
+            this.suggestions = await this.plugin.analyzeNotesForKeywords();
+            this.isAnalyzing = false;
+
+            // Update status
+            statusEl.empty();
+            statusEl.createEl('p', {
+                text: `Found ${this.suggestions.length} suggestions from ${this.plugin.app.vault.getMarkdownFiles().length} notes`,
+                cls: 'akl-stats'
+            });
+
+            // Initialize selection state
+            for (let suggestion of this.suggestions) {
+                this.selectedSuggestions.set(suggestion.keyword, {
+                    selected: false,
+                    addAsVariationTo: null
+                });
+            }
+
+            // Render the suggestions UI
+            this.renderSuggestions(contentEl);
+
+        } catch (error) {
+            statusEl.empty();
+            statusEl.createEl('p', {
+                text: `Error analyzing notes: ${error.message}`,
+                cls: 'akl-error'
+            });
+            console.error('Error analyzing notes:', error);
+        }
+    }
+
+    renderSuggestions(container) {
+        // Search box
+        const searchContainer = container.createDiv({cls: 'akl-search-container'});
+        const searchInput = searchContainer.createEl('input', {
+            type: 'text',
+            placeholder: 'Search suggestions...',
+            cls: 'akl-search-input'
+        });
+        searchInput.value = this.searchQuery;
+        searchInput.addEventListener('input', (e) => {
+            this.searchQuery = e.target.value;
+            this.refreshSuggestionList();
+        });
+
+        // Selection buttons
+        const buttonRow = container.createDiv({cls: 'akl-button-row'});
+        const selectAllBtn = buttonRow.createEl('button', {text: 'Select All', cls: 'akl-mini-button'});
+        selectAllBtn.addEventListener('click', () => {
+            for (let [keyword, state] of this.selectedSuggestions) {
+                if (this.matchesSearch(keyword)) {
+                    state.selected = true;
+                }
+            }
+            this.refreshSuggestionList();
+        });
+
+        const deselectAllBtn = buttonRow.createEl('button', {text: 'Deselect All', cls: 'akl-mini-button'});
+        deselectAllBtn.addEventListener('click', () => {
+            for (let [keyword, state] of this.selectedSuggestions) {
+                if (this.matchesSearch(keyword)) {
+                    state.selected = false;
+                }
+            }
+            this.refreshSuggestionList();
+        });
+
+        // Suggestions list container
+        this.suggestionsListEl = container.createDiv({cls: 'akl-suggestions-list'});
+        this.refreshSuggestionList();
+
+        // Action buttons
+        const actionRow = container.createDiv({cls: 'akl-action-row'});
+
+        const addBtn = actionRow.createEl('button', {text: 'Add Selected Keywords', cls: 'mod-cta'});
+        addBtn.addEventListener('click', () => this.addSelectedKeywords());
+
+        const cancelBtn = actionRow.createEl('button', {text: 'Cancel'});
+        cancelBtn.addEventListener('click', () => this.close());
+    }
+
+    matchesSearch(keyword) {
+        if (!this.searchQuery) return true;
+        return keyword.toLowerCase().includes(this.searchQuery.toLowerCase());
+    }
+
+    refreshSuggestionList() {
+        if (!this.suggestionsListEl) return;
+
+        this.suggestionsListEl.empty();
+
+        // Filter suggestions based on search
+        const filteredSuggestions = this.suggestions.filter(s => this.matchesSearch(s.keyword));
+
+        if (filteredSuggestions.length === 0) {
+            this.suggestionsListEl.createEl('p', {
+                text: 'No suggestions match your search.',
+                cls: 'akl-no-results'
+            });
+            return;
+        }
+
+        // Render each suggestion
+        for (let suggestion of filteredSuggestions) {
+            const state = this.selectedSuggestions.get(suggestion.keyword);
+
+            const itemDiv = this.suggestionsListEl.createDiv({cls: 'akl-suggestion-item'});
+
+            // Checkbox and label
+            const headerDiv = itemDiv.createDiv({cls: 'akl-suggestion-header'});
+
+            const checkbox = headerDiv.createEl('input', {type: 'checkbox', cls: 'akl-checkbox'});
+            checkbox.checked = state.selected;
+            checkbox.addEventListener('change', (e) => {
+                state.selected = e.target.checked;
+            });
+
+            const labelDiv = headerDiv.createDiv({cls: 'akl-suggestion-label'});
+            labelDiv.createSpan({text: suggestion.keyword, cls: 'akl-keyword-text'});
+            labelDiv.createSpan({text: ` (${suggestion.totalNotes} notes)`, cls: 'akl-count-text'});
+
+            // Notes preview
+            if (suggestion.notes.length > 0) {
+                const notesDiv = itemDiv.createDiv({cls: 'akl-notes-preview'});
+                notesDiv.createEl('span', {text: 'In: ', cls: 'akl-notes-label'});
+                notesDiv.createEl('span', {
+                    text: suggestion.notes.join(', ') + (suggestion.totalNotes > 5 ? '...' : ''),
+                    cls: 'akl-notes-list'
+                });
+            }
+
+            // Variation selector
+            const variationDiv = itemDiv.createDiv({cls: 'akl-variation-selector'});
+            variationDiv.createEl('span', {text: 'Or add as variation to: ', cls: 'akl-variation-label'});
+
+            const select = variationDiv.createEl('select', {cls: 'akl-variation-dropdown'});
+            const noneOption = select.createEl('option', {value: '', text: '(None - add as new keyword)'});
+
+            // Add existing keywords as options
+            for (let existingKeyword of this.plugin.settings.keywords) {
+                if (existingKeyword.keyword.toLowerCase() !== suggestion.keyword.toLowerCase()) {
+                    select.createEl('option', {
+                        value: existingKeyword.keyword,
+                        text: existingKeyword.keyword
+                    });
+                }
+            }
+
+            select.value = state.addAsVariationTo || '';
+            select.addEventListener('change', (e) => {
+                state.addAsVariationTo = e.target.value || null;
+                if (e.target.value) {
+                    checkbox.checked = true;
+                    state.selected = true;
+                }
+            });
+        }
+    }
+
+    async addSelectedKeywords() {
+        let addedCount = 0;
+        let variationCount = 0;
+
+        for (let [keyword, state] of this.selectedSuggestions) {
+            if (!state.selected) continue;
+
+            if (state.addAsVariationTo) {
+                // Add as variation to existing keyword
+                const existingKeyword = this.plugin.settings.keywords.find(
+                    k => k.keyword === state.addAsVariationTo
+                );
+                if (existingKeyword) {
+                    if (!existingKeyword.variations) {
+                        existingKeyword.variations = [];
+                    }
+                    if (!existingKeyword.variations.includes(keyword)) {
+                        existingKeyword.variations.push(keyword);
+                        variationCount++;
+                    }
+                }
+            } else {
+                // Add as new keyword
+                this.plugin.settings.keywords.push({
+                    keyword: keyword,
+                    target: keyword,
+                    variations: [],
+                    enableTags: false
+                });
+                addedCount++;
+            }
+        }
+
+        // Save settings
+        await this.plugin.saveSettings();
+
+        // Show result
+        let message = '';
+        if (addedCount > 0 && variationCount > 0) {
+            message = `Added ${addedCount} new keyword(s) and ${variationCount} variation(s)`;
+        } else if (addedCount > 0) {
+            message = `Added ${addedCount} new keyword(s)`;
+        } else if (variationCount > 0) {
+            message = `Added ${variationCount} variation(s)`;
+        } else {
+            message = 'No keywords selected';
+        }
+
+        new Notice(message);
+        this.close();
     }
 
     onClose() {
@@ -1622,6 +2171,22 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
     }
 
     /**
+     * Update card header title without full re-render
+     * @param {HTMLElement} cardTitle - The card title element to update
+     * @param {string} keyword - The keyword value
+     * @param {string} target - The target value
+     */
+    updateCardHeader(cardTitle, keyword, target) {
+        cardTitle.empty();
+        const titleText = keyword || 'New Keyword';
+        const targetText = target ? ` → ${target}` : '';
+        cardTitle.createSpan({text: titleText, cls: 'akl-keyword-name'});
+        if (targetText) {
+            cardTitle.createSpan({text: targetText, cls: 'akl-target-name'});
+        }
+    }
+
+    /**
      * Render the list of keywords with their settings
      * @param {HTMLElement} container - Container element to render into
      */
@@ -1689,15 +2254,22 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                         .setPlaceholder('Enter keyword...')
                         .onChange(async (value) => {
                             this.plugin.settings.keywords[i].keyword = value;
-                            // If target is empty, auto-fill it with the keyword
-                            if (!this.plugin.settings.keywords[i].target) {
-                                this.plugin.settings.keywords[i].target = value;
-                            }
                             await this.plugin.saveSettings();
-                            // Update card header title
-                            this.display();
+                            // Update card header title without full re-render
+                            this.updateCardHeader(cardTitle, value, this.plugin.settings.keywords[i].target);
                         });
                     text.inputEl.addClass('akl-input');
+
+                    // Auto-fill target only when user leaves the field (on blur)
+                    text.inputEl.addEventListener('blur', async () => {
+                        // If target is empty, auto-fill it with the keyword
+                        if (!this.plugin.settings.keywords[i].target && this.plugin.settings.keywords[i].keyword) {
+                            this.plugin.settings.keywords[i].target = this.plugin.settings.keywords[i].keyword;
+                            await this.plugin.saveSettings();
+                            // Update card header and re-render to show the auto-filled target
+                            this.display();
+                        }
+                    });
                 });
 
             // Target note input field
@@ -1710,7 +2282,8 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                         .onChange(async (value) => {
                             this.plugin.settings.keywords[i].target = value;
                             await this.plugin.saveSettings();
-                            this.display();
+                            // Update card header title without full re-render
+                            this.updateCardHeader(cardTitle, this.plugin.settings.keywords[i].keyword, value);
                         });
                     text.inputEl.addClass('akl-input');
                 });
@@ -2160,6 +2733,172 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
 
             .akl-keyword-card {
                 animation: slideIn 0.2s ease-out;
+            }
+
+            /* Suggested Keyword Builder Modal Styles */
+            .akl-suggestion-modal {
+                max-width: 700px;
+                max-height: 80vh;
+                overflow-y: auto;
+            }
+
+            .akl-status {
+                margin-bottom: 1em;
+                padding: 1em;
+                background: var(--background-secondary);
+                border-radius: 6px;
+            }
+
+            .akl-analyzing {
+                color: var(--text-muted);
+                font-style: italic;
+            }
+
+            .akl-error {
+                color: var(--text-error);
+            }
+
+            .akl-search-container {
+                margin-bottom: 1em;
+            }
+
+            .akl-search-input {
+                width: 100%;
+                padding: 0.6em;
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 4px;
+                background: var(--background-primary);
+                color: var(--text-normal);
+                font-size: 0.95em;
+            }
+
+            .akl-search-input:focus {
+                outline: none;
+                border-color: var(--color-accent);
+            }
+
+            .akl-button-row {
+                display: flex;
+                gap: 0.5em;
+                margin-bottom: 1em;
+            }
+
+            .akl-mini-button {
+                padding: 0.4em 0.8em;
+                font-size: 0.85em;
+                background: var(--background-secondary);
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 4px;
+                cursor: pointer;
+                color: var(--text-normal);
+            }
+
+            .akl-mini-button:hover {
+                background: var(--background-modifier-hover);
+            }
+
+            .akl-suggestions-list {
+                max-height: 400px;
+                overflow-y: auto;
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 6px;
+                padding: 0.5em;
+                background: var(--background-primary);
+                margin-bottom: 1em;
+            }
+
+            .akl-suggestion-item {
+                padding: 0.75em;
+                margin-bottom: 0.5em;
+                background: var(--background-secondary);
+                border-radius: 4px;
+                border: 1px solid var(--background-modifier-border);
+            }
+
+            .akl-suggestion-item:hover {
+                background: var(--background-modifier-hover);
+            }
+
+            .akl-suggestion-header {
+                display: flex;
+                align-items: center;
+                gap: 0.75em;
+                margin-bottom: 0.5em;
+            }
+
+            .akl-checkbox {
+                cursor: pointer;
+                width: 16px;
+                height: 16px;
+            }
+
+            .akl-suggestion-label {
+                flex: 1;
+            }
+
+            .akl-keyword-text {
+                font-weight: 500;
+                color: var(--text-normal);
+            }
+
+            .akl-count-text {
+                color: var(--text-muted);
+                font-size: 0.9em;
+            }
+
+            .akl-notes-preview {
+                margin-bottom: 0.5em;
+                padding-left: 2em;
+                font-size: 0.85em;
+            }
+
+            .akl-notes-label {
+                color: var(--text-muted);
+                font-weight: 500;
+            }
+
+            .akl-notes-list {
+                color: var(--text-muted);
+                font-style: italic;
+            }
+
+            .akl-variation-selector {
+                padding-left: 2em;
+                display: flex;
+                align-items: center;
+                gap: 0.5em;
+                font-size: 0.85em;
+            }
+
+            .akl-variation-label {
+                color: var(--text-muted);
+            }
+
+            .akl-variation-dropdown {
+                flex: 1;
+                padding: 0.3em;
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 4px;
+                background: var(--background-primary);
+                color: var(--text-normal);
+            }
+
+            .akl-no-results {
+                text-align: center;
+                padding: 2em;
+                color: var(--text-muted);
+                font-style: italic;
+            }
+
+            .akl-action-row {
+                display: flex;
+                justify-content: flex-end;
+                gap: 0.75em;
+                margin-top: 1em;
+            }
+
+            .akl-action-row button {
+                padding: 0.6em 1.2em;
             }
         `;
 
