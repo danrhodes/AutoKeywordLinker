@@ -111,6 +111,9 @@ module.exports = class AutoKeywordLinker extends Plugin {
         // Add the settings tab to Obsidian's settings panel
         this.addSettingTab(new AutoKeywordLinkerSettingTab(this.app, this));
 
+        // Add custom CSS styles for modals and UI on plugin load
+        this.addCustomStyles();
+
         // If auto-link on save is enabled, set up the event listener
         if (this.settings.autoLinkOnSave) {
             this.setupAutoLinkOnSave();
@@ -1432,6 +1435,524 @@ module.exports = class AutoKeywordLinker extends Plugin {
         setTimeout(() => {
             this.isSaving = false;
         }, 100);
+    }
+
+    /**
+     * Add custom CSS styles for the improved UI
+     * This is called on plugin load to ensure styles are available for all modals
+     */
+    addCustomStyles() {
+        // Check if styles already exist
+        if (document.getElementById('akl-custom-styles')) {
+            return;
+        }
+
+        const styleEl = document.createElement('style');
+        styleEl.id = 'akl-custom-styles';
+        styleEl.textContent = `
+            /* Header */
+            .akl-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 1.5em;
+                flex-wrap: wrap;
+                gap: 0.5em;
+            }
+
+            .akl-stats {
+                color: var(--text-muted);
+                font-size: 0.9em;
+                padding: 0.25em 0.75em;
+                background: var(--background-secondary);
+                border-radius: 12px;
+            }
+
+            /* Section Headers */
+            .akl-section-header {
+                margin-top: 2em;
+                margin-bottom: 1em;
+            }
+
+            .akl-section-header h3 {
+                margin-bottom: 0.25em;
+            }
+
+            .akl-section-desc {
+                color: var(--text-muted);
+                margin-top: 0;
+            }
+
+            /* Keywords Container */
+            .akl-keywords-container {
+                display: grid;
+                gap: 1em;
+                margin-bottom: 1em;
+            }
+
+            /* Keyword Card */
+            .akl-keyword-card {
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 8px;
+                background: var(--background-primary);
+                overflow: hidden;
+                transition: box-shadow 0.2s ease, transform 0.2s ease;
+            }
+
+            .akl-keyword-card:hover {
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            }
+
+            /* Card Header */
+            .akl-card-header {
+                display: flex;
+                align-items: center;
+                gap: 0.75em;
+                padding: 1em;
+                background: var(--background-secondary);
+                cursor: pointer;
+                border-bottom: 1px solid var(--background-modifier-border);
+            }
+
+            .akl-card-header:hover {
+                background: var(--background-modifier-hover);
+            }
+
+            .akl-collapse-btn {
+                font-size: 0.8em;
+                color: var(--text-muted);
+                user-select: none;
+                flex-shrink: 0;
+                width: 20px;
+                text-align: center;
+            }
+
+            .akl-card-title {
+                flex: 1;
+                display: flex;
+                align-items: center;
+                gap: 0.5em;
+                font-weight: 500;
+                flex-wrap: wrap;
+            }
+
+            .akl-keyword-name {
+                color: var(--text-normal);
+                font-size: 1.05em;
+            }
+
+            .akl-target-name {
+                color: var(--text-muted);
+                font-size: 0.9em;
+            }
+
+            .akl-card-badges {
+                display: flex;
+                gap: 0.5em;
+                flex-wrap: wrap;
+            }
+
+            .akl-badge {
+                padding: 0.25em 0.6em;
+                border-radius: 10px;
+                font-size: 0.75em;
+                font-weight: 500;
+                white-space: nowrap;
+            }
+
+            .akl-badge-tags {
+                background: var(--color-accent);
+                color: white;
+            }
+
+            .akl-badge-variations {
+                background: var(--background-modifier-border);
+                color: var(--text-muted);
+            }
+
+            /* Card Body */
+            .akl-card-body {
+                padding: 1em;
+            }
+
+            .akl-card-body .setting-item {
+                border: none;
+                padding: 0.75em 0;
+            }
+
+            .akl-input {
+                width: 100%;
+            }
+
+            /* Variations Section */
+            .akl-variations-section {
+                padding: 0.75em 0;
+                border-top: 1px solid var(--background-modifier-border);
+                margin-top: 0.5em;
+            }
+
+            .akl-variations-section .setting-item-name {
+                font-weight: 500;
+                margin-bottom: 0.25em;
+            }
+
+            .akl-variations-section .setting-item-description {
+                color: var(--text-muted);
+                font-size: 0.85em;
+                margin-bottom: 0.75em;
+            }
+
+            .akl-chips-container {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.5em;
+                margin-bottom: 0.75em;
+                min-height: 2em;
+                align-items: center;
+            }
+
+            .akl-chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.4em;
+                padding: 0.35em 0.7em;
+                background: var(--background-secondary);
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 14px;
+                font-size: 0.9em;
+                transition: background-color 0.2s ease;
+            }
+
+            .akl-chip:hover {
+                background: var(--background-modifier-hover);
+            }
+
+            .akl-chip-text {
+                color: var(--text-normal);
+            }
+
+            .akl-chip-remove {
+                color: var(--text-muted);
+                font-size: 1.2em;
+                line-height: 1;
+                cursor: pointer;
+                padding: 0 0.2em;
+                border-radius: 50%;
+                transition: color 0.2s ease, background-color 0.2s ease;
+            }
+
+            .akl-chip-remove:hover {
+                color: var(--text-error);
+                background: var(--background-modifier-error);
+            }
+
+            .akl-no-variations {
+                color: var(--text-muted);
+                font-style: italic;
+                font-size: 0.9em;
+            }
+
+            .akl-add-variation {
+                margin-top: 0.5em;
+            }
+
+            .akl-variation-input {
+                width: 100%;
+                padding: 0.5em;
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 4px;
+                background: var(--background-primary);
+                color: var(--text-normal);
+                font-size: 0.9em;
+            }
+
+            .akl-variation-input:focus {
+                border-color: var(--color-accent);
+                outline: none;
+            }
+
+            /* Card Footer */
+            .akl-card-footer {
+                display: flex;
+                justify-content: flex-end;
+                padding-top: 0.75em;
+                margin-top: 0.75em;
+                border-top: 1px solid var(--background-modifier-border);
+            }
+
+            .akl-delete-btn {
+                padding: 0.5em 1em;
+                background: transparent;
+                color: var(--text-error);
+                border: 1px solid var(--text-error);
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 0.9em;
+                transition: background-color 0.2s ease, color 0.2s ease;
+            }
+
+            .akl-delete-btn:hover {
+                background: var(--text-error);
+                color: white;
+            }
+
+            /* Add Button Container */
+            .akl-add-button-container {
+                display: flex;
+                justify-content: center;
+                margin: 1.5em 0;
+            }
+
+            .akl-add-button {
+                padding: 0.75em 1.5em;
+                font-size: 1em;
+            }
+
+            /* Responsive Design */
+            @media (min-width: 768px) {
+                .akl-keywords-container {
+                    grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
+                }
+            }
+
+            @media (max-width: 767px) {
+                /* Keep everything on one line on narrow screens */
+                .akl-card-header {
+                    flex-wrap: nowrap;
+                    padding: 0.75em 0.5em;
+                    gap: 0.4em;
+                }
+
+                .akl-collapse-btn {
+                    font-size: 0.7em;
+                    width: 16px;
+                }
+
+                .akl-card-title {
+                    flex: 1;
+                    min-width: 0;
+                    overflow: hidden;
+                }
+
+                .akl-keyword-name {
+                    font-size: 0.9em;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    max-width: 100%;
+                }
+
+                .akl-target-name {
+                    font-size: 0.8em;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+
+                .akl-card-badges {
+                    flex-shrink: 0;
+                }
+
+                .akl-badge {
+                    padding: 0.2em 0.4em;
+                    font-size: 0.65em;
+                }
+
+                .akl-header {
+                    flex-direction: column;
+                    align-items: flex-start;
+                }
+            }
+
+            /* Dark mode adjustments */
+            .theme-dark .akl-keyword-card:hover {
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            }
+
+            /* Animations */
+            @keyframes slideIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(-10px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+
+            .akl-keyword-card {
+                animation: slideIn 0.2s ease-out;
+            }
+
+            /* Suggested Keyword Builder Modal Styles */
+            .akl-suggestion-modal {
+                max-width: 700px;
+                max-height: 80vh;
+                overflow-y: auto;
+            }
+
+            .akl-status {
+                margin-bottom: 1em;
+                padding: 1em;
+                background: var(--background-secondary);
+                border-radius: 6px;
+            }
+
+            .akl-analyzing {
+                color: var(--text-muted);
+                font-style: italic;
+            }
+
+            .akl-error {
+                color: var(--text-error);
+            }
+
+            .akl-search-container {
+                margin-bottom: 1em;
+            }
+
+            .akl-search-input {
+                width: 100%;
+                padding: 0.6em;
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 4px;
+                background: var(--background-primary);
+                color: var(--text-normal);
+                font-size: 0.95em;
+            }
+
+            .akl-search-input:focus {
+                outline: none;
+                border-color: var(--color-accent);
+            }
+
+            .akl-button-row {
+                display: flex;
+                gap: 0.5em;
+                margin-bottom: 1em;
+            }
+
+            .akl-mini-button {
+                padding: 0.4em 0.8em;
+                font-size: 0.85em;
+                background: var(--background-secondary);
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 4px;
+                cursor: pointer;
+                color: var(--text-normal);
+            }
+
+            .akl-mini-button:hover {
+                background: var(--background-modifier-hover);
+            }
+
+            .akl-suggestions-list {
+                max-height: 400px;
+                overflow-y: auto;
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 6px;
+                padding: 0.5em;
+                background: var(--background-primary);
+                margin-bottom: 1em;
+            }
+
+            .akl-suggestion-item {
+                padding: 0.75em;
+                margin-bottom: 0.5em;
+                background: var(--background-secondary);
+                border-radius: 4px;
+                border: 1px solid var(--background-modifier-border);
+            }
+
+            .akl-suggestion-item:hover {
+                background: var(--background-modifier-hover);
+            }
+
+            .akl-suggestion-header {
+                display: flex;
+                align-items: center;
+                gap: 0.75em;
+                margin-bottom: 0.5em;
+            }
+
+            .akl-checkbox {
+                cursor: pointer;
+                width: 16px;
+                height: 16px;
+            }
+
+            .akl-suggestion-label {
+                flex: 1;
+            }
+
+            .akl-keyword-text {
+                font-weight: 500;
+                color: var(--text-normal);
+            }
+
+            .akl-count-text {
+                color: var(--text-muted);
+                font-size: 0.9em;
+            }
+
+            .akl-notes-preview {
+                margin-bottom: 0.5em;
+                padding-left: 2em;
+                font-size: 0.85em;
+            }
+
+            .akl-notes-label {
+                color: var(--text-muted);
+                font-weight: 500;
+            }
+
+            .akl-notes-list {
+                color: var(--text-muted);
+                font-style: italic;
+            }
+
+            .akl-variation-selector {
+                padding-left: 2em;
+                display: flex;
+                align-items: center;
+                gap: 0.5em;
+                font-size: 0.85em;
+            }
+
+            .akl-variation-label {
+                color: var(--text-muted);
+            }
+
+            .akl-variation-dropdown {
+                flex: 1;
+                padding: 0.3em;
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 4px;
+                background: var(--background-primary);
+                color: var(--text-normal);
+            }
+
+            .akl-no-results {
+                text-align: center;
+                padding: 2em;
+                color: var(--text-muted);
+                font-style: italic;
+            }
+
+            .akl-action-row {
+                display: flex;
+                justify-content: flex-end;
+                gap: 0.75em;
+                margin-top: 1em;
+            }
+
+            .akl-action-row button {
+                padding: 0.6em 1.2em;
+            }
+        `;
+
+        document.head.appendChild(styleEl);
     }
 }
 
