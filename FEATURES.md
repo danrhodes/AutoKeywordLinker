@@ -1,5 +1,5 @@
 # Auto Keyword Linker - Feature List
-v2.0.3
+v2.0.7
 
 ## Core Linking Features
 
@@ -8,10 +8,29 @@ v2.0.3
 - Case-sensitive and case-insensitive matching modes
 - First occurrence only mode (link once per note)
 - Word boundary detection (matches whole words only)
+- 🆕 Link scope control (vault-wide or folder-specific)
+- 🆕 Relative link support (relative path links instead of absolute)
+- 🆕 Block reference linking (link to specific blocks/headings)
 
-## Suggest new keywords from notes
+## 🆕 AI-Powered Keyword Suggestions
 
-- Automatically scan for and add new keywords and or variations from analysing your notes
+- Automatically scan all markdown files in vault
+- Extract common phrases and terms (2-3 words)
+- Intelligent stop word filtering (excludes common words)
+- Frequency counting for each suggestion
+- Preview which notes contain each suggested keyword
+- Interactive modal with search, sort, and bulk selection
+- Sort options:
+  - By frequency (most common first)
+  - By phrase length (longest first)
+  - Alphabetically
+- Bulk actions:
+  - Select All
+  - Deselect All
+  - Toggle Selection
+- Choose to add as new keyword or variation of existing
+- Real-time search filtering
+- Notes preview showing where suggestion appears
 
 ## Smart Content Detection
 
@@ -23,6 +42,27 @@ v2.0.3
 - Skips keywords in link aliases `[[target|alias]]`
 - Skips keywords preceded by # (existing tags)
 - Comprehensive URL detection and protection
+
+## 🆕 Link Scope Management
+
+- Per-keyword scope configuration
+- Vault-wide linking (default) - link everywhere
+- Folder-specific linking - only link within specified folder
+- Folder path configuration for scoped keywords
+- Scope inheritance through subfolders
+- Multiple keywords can target same term in different contexts
+- Context-aware linking prevents ambiguous matches
+- Allows same keyword with different meanings in different folders
+
+## 🆕 Advanced Link Options
+
+- Relative link toggle per keyword
+- Block reference field for direct section linking
+- Support for block IDs: `#^block-id`
+- Support for headings: `#Heading Name`
+- Support for nested headings: `#Parent > Child`
+- Combine with scope and variations
+- Compatible with all link formats
 
 ## Tag Management
 
@@ -41,10 +81,11 @@ v2.0.3
 - Preview mode for both single and bulk operations
 - Auto-link on save (automatic linking when saving files)
 - Manual command execution via command palette
+- 🆕 Suggest keywords from notes (AI-powered discovery)
 
 ## Note Management
 
-- Automatic target note creation (if doesn’t exist)
+- Automatic target note creation (if doesn't exist)
 - Vault-wide duplicate checking before creating notes
 - Customizable new note folder location
 - New note template support with variables (`{{keyword}}`, `{{date}}`)
@@ -56,6 +97,8 @@ v2.0.3
 - Smart merge on import (adds new keywords, merges variations)
 - Duplicate prevention during import
 - Import summary with add/merge counts
+- Includes all settings: scope, relative links, block refs, tags
+- Version-compatible JSON format
 
 ## Statistics & Analytics
 
@@ -63,7 +106,12 @@ v2.0.3
 - Total notes processed counter
 - Last run date tracking
 - Configured keywords count
-- Per-keyword breakdown with variations and tag status
+- Per-keyword breakdown with:
+  - Variations list
+  - Tag status
+  - 🆕 Link scope
+  - 🆕 Relative link status
+  - 🆕 Block reference
 
 ## Safety Features
 
@@ -73,15 +121,31 @@ v2.0.3
 - Cursor position preservation during edits
 - Editor content validation before applying changes
 - Compatible with Obsidian Sync and backup solutions
+- 🆕 Scope-based filtering prevents unwanted links
+- 🆕 Settings sync with conflict prevention
+
+## 🆕 Settings Synchronization
+
+- Automatic background settings sync (15-second intervals)
+- Detects external changes from sync services
+- Silent reload without interrupting workflow
+- Prevents save/reload loops with isSaving flag
+- Maintains keyword configuration consistency across devices
+- Compatible with Obsidian Sync, iCloud, and other sync solutions
+- Backward compatibility with older keyword formats
 
 ## User Interface
 
 - Settings tab with visual keyword list
 - Add/edit/delete keywords inline
-- Command palette integration (7 commands)
+- Command palette integration (8 commands)
 - Preview modals with context display
 - Statistics modal
 - Import file selector modal
+- 🆕 Keyword suggestion modal with interactive controls
+- 🆕 Per-keyword scope dropdown
+- 🆕 Relative link toggle per keyword
+- 🆕 Block reference input field
 
 ## Configuration Options
 
@@ -92,13 +156,119 @@ v2.0.3
 - New note template editor
 - Auto-link on save toggle
 - Per-keyword tag enable toggle
+- 🆕 Per-keyword link scope (vault-wide or folder-specific)
+- 🆕 Per-keyword scope folder path
+- 🆕 Per-keyword relative link toggle
+- 🆕 Per-keyword block reference field
 
 ## Commands Available
 
 1. Link keywords in current note
-1. Preview keyword linking in current note
-1. Link keywords in all notes
-1. Preview keyword linking in all notes
-1. View statistics
-1. Export keywords to JSON
-1. Import keywords from JSON
+2. Preview keyword linking in current note
+3. Link keywords in all notes
+4. Preview keyword linking in all notes
+5. View statistics
+6. Export keywords to JSON
+7. Import keywords from JSON
+8. 🆕 Suggest keywords from notes
+
+## Performance Features
+
+- Optimized regex patterns for efficient matching
+- Batch processing for bulk operations
+- Memory-safe file processing (one at a time)
+- Asynchronous operations (non-blocking UI)
+- Debounced tag operations
+- Smart caching to prevent redundant processing
+- 🆕 Scope-based keyword filtering reduces processing
+- 🆕 Stop word filtering in suggestions improves relevance
+- 🆕 Background settings sync with minimal overhead
+
+## Compatibility
+
+- Obsidian v0.15.0 or higher
+- Official Obsidian API (no private APIs)
+- Cross-platform (Windows, macOS, Linux, iOS, Android)
+- Obsidian Sync compatible
+- iCloud and other sync solutions
+- Standard JSON format for import/export
+- 🆕 Works with complex folder hierarchies
+- 🆕 Relative link support for portable vaults
+
+## Intelligent Features
+
+- **Context-Aware**: Respects markdown structure and existing formatting
+- **Variation Matching**: Handles multiple forms of same keyword
+- **Priority Sorting**: Processes longest keywords first to avoid partial matches
+- **Safe Replacement**: Applies changes in reverse order to preserve positions
+- 🆕 **Scope Filtering**: Only processes relevant keywords for each note
+- 🆕 **AI Discovery**: Automatically finds potential keywords from actual usage
+- 🆕 **Frequency Analysis**: Shows which terms matter most in your vault
+- 🆕 **Multi-Context Support**: Same term can link differently based on location
+
+## Use Case Support
+
+### Personal Knowledge Management
+- Track people, concepts, projects
+- 🆕 Discover emerging patterns with suggestions
+- Build interconnected personal wiki
+- Mix vault-wide and scoped keywords
+
+### Team Documentation
+- Maintain consistent terminology
+- Share keyword configurations
+- 🆕 Department-specific scoped keywords
+- Collaborative keyword discovery
+
+### Academic Research
+- Link concepts and methodologies
+- Track authors and papers
+- 🆕 Link to specific sections in literature notes
+- Discover frequently-cited concepts
+
+### Project Management
+- Track projects and stakeholders
+- Milestone and deliverable linking
+- 🆕 Project-scoped keywords prevent cross-contamination
+- Meeting note auto-linking
+
+### Content Creation
+- Build topical content networks
+- Manage characters and themes
+- 🆕 Relative links for portable content
+- Series and collection linking
+
+## Quality of Life
+
+- Visual keyword cards in settings
+- Animated UI transitions
+- Searchable suggestion modal
+- Color-coded statistics
+- Inline editing without modal switching
+- Bulk selection tools
+- Import/export with progress feedback
+- 🆕 Real-time search in suggestions
+- 🆕 Multiple sort options for suggestions
+- 🆕 Note preview in suggestion selection
+- 🆕 Frequency counts for data-driven decisions
+
+## Safety & Reliability
+
+- Preview mode before committing changes
+- Undo-friendly operations
+- No data loss on sync conflicts
+- Validation before all modifications
+- Clear error messaging
+- 🆕 Scope isolation prevents unintended links
+- 🆕 Settings sync with conflict detection
+- 🆕 Background sync doesn't interrupt workflow
+
+## Future-Ready
+
+- Extensible JSON format
+- Template variable system
+- Plugin integration potential
+- Customizable behavior
+- 🆕 AI-ready architecture for future enhancements
+- 🆕 Flexible scope system allows new scope types
+- 🆕 Block reference format supports future Obsidian features

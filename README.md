@@ -1,5 +1,5 @@
 # Auto Keyword Linker for Obsidian
-v2.0.3
+v2.0.7
 
 Automatically convert keywords into wiki-style links throughout your Obsidian vault. This plugin helps you build a richly interconnected knowledge graph by intelligently linking keywords to their target notes, creating a web of backlinks that reveals hidden connections in your notes.
 
@@ -17,29 +17,180 @@ One of the most powerful features of this plugin is its ability to **automatical
 - **Discover Hidden Connections**: Your graph view reveals relationships you might not have noticed manually
 - **Effortless Network Effects**: As you write naturally, your vault becomes increasingly interconnected without extra effort
 - **Rich Context**: Each note's backlinks section shows every mention across your vault, providing comprehensive context
-<img width="305" height="355" alt="image" src="https://github.com/user-attachments/assets/04e46ea2-533f-486a-8e94-68055eae8f55" />
 
 ### Time Savings
 
 - **No More Repetitive Linking**: Stop manually adding brackets around the same keywords hundreds of times
 - **Bulk Operations**: Link keywords across your entire vault in seconds instead of hours
 - **Consistent Linking**: Never forget to link an important term again
+- **🆕 AI-Powered Suggestions**: Automatically discover potential keywords from your existing notes
 
 ### Flexibility
 
 - **Keyword Variations**: Handle different spellings, nicknames, or abbreviations automatically (e.g., "ML", "machine learning", "Machine Learning" all link to the same note)
 - **Preview Before Apply**: See exactly what will change before committing
 - **Granular Control**: Link keywords in a single note or across your entire vault
+- **🆕 Scoped Linking**: Restrict keywords to specific folders for context-aware linking
+- **🆕 Relative Links**: Option to create relative path links instead of absolute paths
+- **🆕 Block References**: Link directly to specific blocks within notes
 
 ## ✨ Features
 
-### 1. **Keyword Management with Variations**
+### 1. **🆕 Smart Keyword Suggestion System**
+
+**NEW**: Let the plugin analyze your vault and suggest potential keywords automatically.
+
+**How it works**:
+- Command: "Suggest keywords from notes"
+- Scans all markdown files in your vault
+- Extracts common phrases and terms (2-3 words)
+- Filters out common stop words
+- Shows frequency count for each suggestion
+- Preview which notes contain each suggested keyword
+- Select suggestions to add as new keywords or variations
+
+**Interactive Suggestion Modal**:
+- **Search**: Filter suggestions in real-time
+- **Sort Options**: 
+  - By frequency (most common first)
+  - By phrase length (longest first)
+  - Alphabetically
+- **Bulk Actions**:
+  - Select All
+  - Deselect All
+  - Toggle Selection
+- **Smart Assignment**: Choose whether to add as new keyword or variation of existing
+
+**Benefits**:
+- **Discover Hidden Patterns**: Find commonly-used terms you didn't realize were important
+- **Build Keywords Faster**: No need to manually think of every term
+- **Data-Driven Decisions**: Frequency counts show which terms matter most
+- **Reduced Manual Work**: Let AI do the heavy lifting of keyword discovery
+
+**Example Workflow**:
+```
+1. Run "Suggest keywords from notes"
+2. Plugin analyzes vault, finds "machine learning" appears 47 times across 12 notes
+3. Review suggestions, see preview of affected notes
+4. Select interesting suggestions
+5. Choose whether to add as new keyword or variation
+6. Keywords automatically configured
+```
+
+### 2. **🆕 Advanced Link Scoping**
+
+**NEW**: Control where keywords are linked with granular scope settings.
+
+**Link Scope Options**:
+- **Vault-wide** (default): Link this keyword everywhere in your vault
+- **Folder-specific**: Only link this keyword within a specific folder and its subfolders
+
+**How it works**:
+- Configure scope per keyword in settings
+- Choose "Folder-specific" and select the folder path
+- Plugin only processes keywords when they appear in the specified scope
+- Other occurrences outside the scope are ignored
+
+**Use Cases**:
+- **Context-Sensitive Terms**: "Sprint" means different things in fitness notes vs. project notes
+- **Department-Specific Jargon**: Technical terms only relevant in specific project folders
+- **Ambiguous Keywords**: Words with multiple meanings depending on context
+- **Team Boundaries**: Separate keyword sets for different teams/departments
+
+**Example Configuration**:
+```
+Keyword: Sprint
+Target: Projects/Agile/Sprint Planning
+Scope: Folder-specific
+Scope Folder: Projects/
+→ Only links "Sprint" in the Projects folder
+
+Keyword: Sprint
+Target: Fitness/Running/Sprint Training
+Scope: Folder-specific
+Scope Folder: Health/
+→ Only links "Sprint" in the Health folder
+```
+
+**Benefits**:
+- **Avoid False Positives**: Prevent linking when keyword has different meaning
+- **Organized Workspaces**: Keep different domains of knowledge separate
+- **Reduced Noise**: Target notes only show relevant backlinks
+- **Flexible Configuration**: Mix vault-wide and scoped keywords
+
+### 3. **🆕 Relative Link Support**
+
+**NEW**: Create relative path links instead of absolute paths for better portability.
+
+**How it works**:
+- Enable "Use relative links" for any keyword
+- Links are created relative to the source note's location
+- Results in cleaner, more portable vault structure
+
+**Comparison**:
+```
+Absolute Link (default):
+[[Projects/Website Redesign]]
+
+Relative Link (when enabled):
+[[../Projects/Website Redesign]]
+```
+
+**Benefits**:
+- **Better Portability**: Easier to move folders around
+- **Cleaner Paths**: Less visual clutter in reading mode
+- **Vault Organization**: More flexible folder structure changes
+- **Cross-Platform**: Some sync solutions prefer relative paths
+
+**When to Use**:
+- Vaults with complex folder hierarchies
+- Notes that might be reorganized frequently
+- Projects shared across different systems
+- When folder structure is more important than flat linking
+
+### 4. **🆕 Block Reference Linking**
+
+**NEW**: Link directly to specific blocks, headings, or sections within target notes.
+
+**How it works**:
+- Add block reference in keyword configuration (e.g., `#^block-id` or `#heading`)
+- Links automatically include the block reference
+- Clicking link jumps directly to that section
+
+**Supported Reference Types**:
+- **Block IDs**: `#^unique-block-id`
+- **Headings**: `#Heading Name`
+- **Nested Headings**: `#Parent Heading > Nested Heading`
+
+**Example Configuration**:
+```
+Keyword: API Documentation
+Target: Development/API Guide
+Block Reference: #Authentication
+→ Creates: [[Development/API Guide#Authentication]]
+
+Keyword: Meeting Protocol
+Target: Procedures/Meetings
+Block Reference: #^meeting-checklist
+→ Creates: [[Procedures/Meetings#^meeting-checklist]]
+```
+
+**Benefits**:
+- **Precise Navigation**: Jump to exact relevant section
+- **Better Context**: Readers land on the right information immediately
+- **Living Documentation**: Link to specific procedures or checklists
+- **Reduced Confusion**: No need to search through long target notes
+
+### 5. **Keyword Management with Variations**
 
 Define keywords and their variations in an intuitive interface. Each keyword consists of:
 
 - **Keyword**: The primary search term (e.g., "Machine Learning")
 - **Target Note**: The note to link to (e.g., "Concepts/Machine Learning")
 - **Variations**: Alternative spellings or abbreviations (e.g., "ML, machine learning, neural networks")
+- **🆕 Link Scope**: Where this keyword should be linked (vault-wide or folder-specific)
+- **🆕 Relative Links**: Option to use relative paths
+- **🆕 Block Reference**: Optional block/heading reference
 
 **How it works**: When you define variations, all forms automatically link to the same target note. This is perfect for:
 - People with nicknames or multiple name formats
@@ -52,13 +203,17 @@ Define keywords and their variations in an intuitive interface. Each keyword con
 Keyword: Machine Learning
 Target: Concepts/Machine Learning
 Variations: ML, machine learning, neural networks
+Link Scope: Vault-wide
+Use Relative Links: No
+Block Reference: #Overview
+Enable Tags: Yes
 ```
 
-Any mention of "Machine Learning", "ML", "machine learning", or "neural networks" in your notes will automatically link to "Concepts/Machine Learning".
+Any mention of "Machine Learning", "ML", "machine learning", or "neural networks" in your notes will automatically link to "Concepts/Machine Learning#Overview".
 
-### 2. **🆕 Automatic Tag Management**
+### 6. **Automatic Tag Management**
 
-**NEW**: Each keyword can now automatically add tags to both the source note (where the keyword appears) and the target note (where it links to). This creates a powerful dual system of linking and tagging for enhanced discoverability.
+Each keyword can now automatically add tags to both the source note (where the keyword appears) and the target note (where it links to). This creates a powerful dual system of linking and tagging for enhanced discoverability.
 
 **How it works**:
 - Enable "Enable tags" for any keyword in the settings
@@ -90,15 +245,15 @@ Result:
 - Multiple tags from different keywords are combined on one line
 - Example: `#machine-learning #neural-networks #deep-learning`
 
-### 3. **🆕 Import/Export Keywords**
+### 7. **Import/Export Keywords**
 
-**NEW**: Easily backup, share, or migrate your keyword configurations using JSON import/export.
+Easily backup, share, or migrate your keyword configurations using JSON import/export.
 
 **Export Keywords**:
 - Command: "Export keywords to JSON"
 - Creates a timestamped JSON file in your vault root
 - Example filename: `auto-keyword-linker-export-2025-01-15.json`
-- Contains all keywords, targets, variations, and tag settings
+- Contains all keywords, targets, variations, scoping, and tag settings
 
 **Import Keywords**:
 - Command: "Import keywords from JSON"
@@ -114,6 +269,7 @@ Result:
 - **Sharing**: Share keyword configurations with team members
 - **Migration**: Move keywords between vaults
 - **Version Control**: Track keyword configuration changes over time
+- **🆕 Suggestions Export**: Export suggested keywords for team review
 
 **Example Workflow**:
 ```
@@ -124,9 +280,9 @@ Result:
 5. Keywords now synchronized across vaults
 ```
 
-### 4. **🆕 Statistics and Analytics**
+### 8. **Statistics and Analytics**
 
-**NEW**: Track your linking activity and keyword usage with built-in statistics.
+Track your linking activity and keyword usage with built-in statistics.
 
 **Command**: "View statistics"
 
@@ -147,19 +303,21 @@ Result:
 - **Configuration Review**: Quick overview of all configured keywords
 - **Activity Monitoring**: Understand when and how often you're using the plugin
 
-### 5. **Smart Linking Engine**
+### 9. **Smart Linking Engine**
 
 The plugin uses intelligent pattern matching to find keywords while avoiding false positives:
 
 - **Word Boundary Detection**: Only matches whole words (won't match "the" in "theme")
 - **Context Awareness**: Skips keywords already inside links, avoiding `[[ [[keyword]] ]]`
 - **Code Block Protection**: Ignores keywords inside code blocks, inline code, or markdown links
-- **🆕 Hashtag Protection**: Skips keywords preceded by # to avoid interfering with existing tags
+- **Hashtag Protection**: Skips keywords preceded by # to avoid interfering with existing tags
 - **URL Detection**: Comprehensive URL pattern matching prevents linking keywords in web addresses
 - **Alias Protection**: Doesn't modify the alias portion of links `[[target|alias]]`
+- **Image Embed Protection**: Skips keywords in image embeds `![[image]]`
+- **YAML Frontmatter**: Ignores keywords in frontmatter metadata
 - **Case Sensitivity Toggle**: Choose whether "keyword" should match "Keyword"
 
-### 6. **Preview Mode**
+### 10. **Preview Mode**
 
 Before making any changes, preview exactly what will be linked:
 
@@ -172,7 +330,7 @@ Before making any changes, preview exactly what will be linked:
 - "Preview keyword linking in current note" - See changes for the active note
 - "Preview keyword linking in all notes" - See changes across your entire vault
 
-### 7. **Flexible Execution Options**
+### 11. **Flexible Execution Options**
 
 Choose how and when to apply keyword linking:
 
@@ -180,410 +338,260 @@ Choose how and when to apply keyword linking:
 
 - **Link keywords in current note**: Process only the note you're currently viewing
 - **Link keywords in all notes**: Process every markdown file in your vault
-- **Preview commands**: Preview changes before applying (available for both single and all notes)
-- **🆕 View statistics**: See linking activity and keyword overview
-- **🆕 Export keywords to JSON**: Backup your keyword configuration
-- **🆕 Import keywords from JSON**: Import keyword configurations
+- **🆕 Suggest keywords from notes**: Analyze vault and suggest new keywords
 
-#### Auto-Link on Save
+#### Automatic Processing
 
-Enable automatic linking whenever you save a note. Perfect for maintaining links as you work without interrupting your flow.
+- **Auto-link on save**: Enable to automatically link keywords every time you save a note
+  - Runs in background without interrupting workflow
+  - Maintains cursor position
+  - Debounced tag addition prevents conflicts
+  - Recursion prevention for safety
 
-**How it works**: 
-1. You write your notes naturally
-2. When you save (Ctrl+S / Cmd+S), the plugin automatically links any keywords
-3. 🆕 Tags are added after a 1-second delay to prevent conflicts
-4. 🆕 Cursor position is intelligently preserved during linking
-5. Your graph grows organically as you work
+### 12. **Automatic Note Creation**
 
-**🆕 Enhanced Features**:
-- **Recursion Prevention**: Tracks which files are being processed to avoid infinite loops
-- **Smarter Tag Timing**: Tags are debounced and added separately to prevent edit conflicts
-- **Improved Cursor Management**: Cursor stays in the correct position even when tags are added
-- **Attachment Protection**: Multiple safety checks ensure only markdown files are processed
+When a target note doesn't exist, the plugin can automatically create it:
 
-**Note**: Requires plugin reload after enabling/disabling.
-
-### 8. **First Occurrence Only Mode**
-
-Control how many times each keyword is linked per note:
-
-- **Enabled**: Links only the first mention of each keyword (recommended for readability)
-- **Disabled**: Links every occurrence of each keyword
-
-**Why this matters**: Linking only the first occurrence keeps your notes readable while still creating the crucial backlink for your graph. The backlink is created regardless of how many times you link the term.
-
-### 9. **Automatic Note Creation**
-
-Never worry about linking to notes that don't exist yet:
-
-- **Auto-Create**: Automatically creates target notes if they don't exist when linking
-- **Vault-Wide Search**: Checks your entire vault before creating duplicates
-- **Customizable Location**: Specify a folder for new notes (or use vault root)
-- **Template Support**: Define a template for newly created notes
-
-**Template Variables**:
-- `{{keyword}}`: Replaced with the keyword/note name
-- `{{date}}`: Replaced with today's date (YYYY-MM-DD format)
+- **Vault-wide duplicate checking**: Searches entire vault before creating
+- **Custom folder location**: Place new notes in specified folder
+- **Template support**: Use customizable templates for new notes
+- **Template variables**:
+  - `{{keyword}}`: Inserts the keyword text
+  - `{{date}}`: Inserts current date in YYYY-MM-DD format
 
 **Example Template**:
-```markdown
+```
 # {{keyword}}
 
 Created: {{date}}
+Type: Auto-created note
 
 ## Overview
 
-## Related Notes
+[Add description here]
+
+## Related Concepts
+
+## References
 ```
 
-### 10. **Case Sensitivity Control**
+## 📋 Available Commands
 
-Choose how strictly keywords should match:
+The plugin adds 8 commands to Obsidian's command palette:
 
-- **Case Sensitive**: "Keyword" only matches "Keyword" (not "keyword" or "KEYWORD")
-- **Case Insensitive** (default): "Keyword" matches any capitalisation
+1. **Link keywords in current note** - Apply linking to active note
+2. **Preview keyword linking in current note** - Preview changes for active note
+3. **Link keywords in all notes** - Apply linking across entire vault
+4. **Preview keyword linking in all notes** - Preview changes for all notes
+5. **View statistics** - Display linking statistics and keyword overview
+6. **Export keywords to JSON** - Backup keyword configuration
+7. **Import keywords from JSON** - Import keyword configuration
+8. **🆕 Suggest keywords from notes** - Analyze vault and suggest keywords
 
-### 11. **Safe File Processing**
+## ⚙️ Settings
 
-The plugin includes multiple safety features:
+### General Settings
 
-- **Markdown Only**: Only processes `.md` files, ignoring attachments (.pdf, .docx, .png, etc.)
-- **Existing Link Protection**: Never modifies text already inside wiki links
-- **Code Preservation**: Respects code blocks and inline code
-- **Frontmatter Safety**: Skips YAML frontmatter entirely
-- **🆕 Recursion Guards**: Prevents processing the same file multiple times simultaneously
-- **Backup Friendly**: All changes are applied through Obsidian's API, compatible with sync and backup solutions
+- **Auto-link on save**: Automatically link keywords when saving notes
+- **Case sensitive**: Require exact case match for keywords
+- **First occurrence only**: Link only the first occurrence of each keyword per note
+- **Auto-create notes**: Automatically create target notes that don't exist
 
-## 🚀 Use Cases
+### Note Creation Settings
+
+- **New note folder**: Folder where auto-created notes are placed
+- **New note template**: Template with variables for auto-created notes
+
+### Keyword Configuration
+
+Each keyword can be configured with:
+- **Keyword**: Main search term
+- **Target**: Note to link to
+- **Variations**: Alternative forms (comma-separated)
+- **Enable Tags**: Auto-add tags to source and target notes
+- **🆕 Link Scope**: Vault-wide or folder-specific
+- **🆕 Scope Folder**: Folder path for scoped linking
+- **🆕 Use Relative Links**: Create relative path links
+- **🆕 Block Reference**: Optional block/heading reference
+
+## 🚀 Getting Started
+
+### Installation
+
+1. Open Obsidian Settings
+2. Go to Community Plugins and disable Safe Mode
+3. Click Browse and search for "Auto Keyword Linker"
+4. Click Install, then Enable
+
+### Basic Setup
+
+1. **Configure Your First Keywords**
+   - Open Settings > Auto Keyword Linker
+   - Add keywords with their target notes
+   - Add variations for flexibility
+
+2. **🆕 Or Use Keyword Suggestions**
+   - Run command "Suggest keywords from notes"
+   - Review suggestions with frequency counts
+   - Select and add relevant keywords
+
+3. **Preview First**
+   - Run "Preview keyword linking in current note"
+   - Review what will be linked
+   - Adjust settings if needed
+
+4. **Apply Linking**
+   - Run "Link keywords in current note"
+   - Check the results
+   - View statistics to track progress
+
+5. **Enable Auto-Linking** (Optional)
+   - Toggle "Auto-link on save" in settings
+   - Write naturally, save when done
+   - Keywords link automatically
+
+### Advanced Setup
+
+#### Setting Up Scoped Keywords
+
+For context-sensitive terms:
+```
+1. Identify ambiguous keywords (e.g., "Sprint", "Module", "Release")
+2. Add keyword with folder-specific scope
+3. Duplicate keyword with different target and scope for other context
+4. Both coexist without conflict
+```
+
+#### Configuring Block References
+
+For precise linking:
+```
+1. Open target note
+2. Add block ID after paragraph: ^block-id
+3. Or note the heading name
+4. Add block reference in keyword config: #^block-id or #Heading
+5. Links now jump to exact location
+```
+
+#### Using Keyword Suggestions
+
+```
+1. Run "Suggest keywords from notes"
+2. Sort by frequency to find most common terms
+3. Search to filter suggestions
+4. Preview which notes contain each term
+5. Select interesting suggestions
+6. Choose: Add as new keyword OR Add as variation
+7. Bulk process for efficiency
+```
+
+## 💼 Use Cases
 
 ### Personal Knowledge Management
 
-**Scenario**: You maintain notes about people, projects, and concepts.
+Track people, concepts, and projects across your personal notes:
 
-**Setup**:
-```
-Keyword: John Smith
-Target: People/John Smith
-Variations: John, JS, J. Smith
-Enable Tags: ✓
+**Keywords Setup**:
+- People: Family members, friends, colleagues
+- Concepts: Learning topics, methodologies, philosophies
+- Projects: Home projects, hobbies, goals
+- **🆕 Use Suggestions**: Discover frequently-mentioned topics you didn't realize were important
 
-Keyword: Project Alpha
-Target: Projects/Project Alpha
-Variations: Alpha, Proj Alpha, PA
-Enable Tags: ✓
-```
+**Workflow**:
+1. 🆕 Run keyword suggestions weekly to discover new patterns
+2. Configure keywords with tags enabled
+3. Enable auto-link on save
+4. Write daily notes naturally
+5. Graph builds automatically with backlinks and tags
+6. Use tag search for alternative discovery
 
-**Result**: Every time you mention "John Smith", "John", or "JS" in meeting notes, journal entries, or project documentation, it automatically:
-- Links to his dedicated note
-- Adds #john-smith tag to both notes
-- Your graph view shows all connections between John, projects, and other people
-- Tag search reveals all John-related notes instantly
+### Team Documentation
 
-### Research and Academia
+Maintain consistent linking in shared vaults:
 
-**Scenario**: You're researching a topic with many technical terms and author names.
+**Keywords Setup**:
+- Team members (with nicknames/variations)
+- Projects and initiatives
+- Technical terms and acronyms
+- Processes and procedures
+- **🆕 Folder-scoped**: Different departments use same terms differently
 
-**Setup**:
-```
-Keyword: Neural Networks
-Target: Concepts/Neural Networks
-Variations: NN, neural net, artificial neural networks
-Enable Tags: ✓
+**Workflow**:
+1. One person configures initial keywords
+2. Export to JSON
+3. Team members import
+4. Individuals add their own
+5. Export and merge regularly
+6. **🆕 Use scoped keywords**: Avoid cross-department confusion
 
-Keyword: Geoffrey Hinton
-Target: Researchers/Geoffrey Hinton
-Variations: Hinton, G. Hinton, G.E. Hinton
-Enable Tags: ✓
-```
+### Academic Research
 
-**Result**: 
-- Technical terms and researcher names are consistently linked throughout your literature notes
-- Tags create topic clusters (#neural-networks, #geoffrey-hinton)
-- Both link-based and tag-based navigation available
-- Export your keyword list to share with research team
+Link concepts, authors, and papers:
+
+**Keywords Setup**:
+- Key concepts and terminology
+- Author names (with variations)
+- Paper titles and abbreviations
+- Research methodologies
+- **🆕 Block references**: Link to specific sections of literature notes
+
+**Workflow**:
+1. Create literature note template
+2. Configure concepts as keywords
+3. Enable block references for methods sections
+4. Write research notes
+5. Links and tags added automatically
+6. Graph reveals conceptual connections
 
 ### Project Management
 
-**Scenario**: You track multiple projects with team members and deliverables.
+Track projects, tasks, and stakeholders:
 
-**Setup**:
-```
-Keyword: Website Redesign
-Target: Projects/Website Redesign 2025
-Variations: redesign, new website, site redesign
-Enable Tags: ✓
+**Keywords Setup**:
+- Project names and codes
+- Stakeholder names
+- Milestones and deliverables
+- **🆕 Scoped to Projects folder**: Avoid linking in personal notes
 
-Keyword: Sarah Johnson
-Target: Team/Sarah Johnson
-Variations: Sarah, SJ, S. Johnson
-Enable Tags: ✓
-```
+**Workflow**:
+1. Configure project keywords with folder scope
+2. Create project folder structure
+3. Enable auto-link on save
+4. Write meeting notes, status updates
+5. Backlinks show project history
+6. Tags group related project notes
 
-**Result**: 
-- Project names and team members are automatically linked in status updates
-- Tags organize notes by project and person
-- Statistics show how many notes reference each project
-- Your graph reveals project dependencies and team collaboration patterns
+### Content Creation
 
-### Zettelkasten Method
+Build interconnected content libraries:
 
-**Scenario**: You're building a Zettelkasten with permanent notes, literature notes, and index notes.
+**Keywords Setup**:
+- Topics and themes
+- Characters or subjects
+- Series or collections
+- **🆕 Relative links**: Better for moving content
 
-**Setup**:
-```
-Keyword: Atomic Notes
-Target: MOC/Atomic Notes Principle
-Variations: atomic note, atomicity in notes
-Enable Tags: ✓
+**Workflow**:
+1. Plan content structure
+2. Configure keywords with relative links
+3. Write drafts
+4. Preview before publishing
+5. Export content with working links
 
-Keyword: Evergreen Notes
-Target: MOC/Evergreen Notes
-Variations: evergreen, evergreen content
-Enable Tags: ✓
-```
+## 💡 Best Practices
 
-**Result**: 
-- Core concepts are consistently linked across all your notes
-- Tags provide an additional layer of conceptual organization
-- Export/import allows sharing methodology with other Zettelkasten practitioners
-- Statistics track your knowledge accumulation over time
+### Keyword Configuration
 
-## 📊 Graph Building Benefits
+- **Start Small**: Begin with 10-15 high-value keywords
+- **Be Specific**: Avoid overly generic terms like "the", "it", "work"
+- **Use Variations**: Capture abbreviations, plurals, alternative spellings
+- **🆕 Smart Scoping**: Use folder-specific scope for ambiguous terms
+- **🆕 Block References**: Add for long target notes with multiple sections
+- **🆕 Discover with AI**: Use keyword suggestions to find what you actually write about
 
-### Why Backlinks Matter
+### Folder Organization
 
-In Obsidian, every link creates two connections:
-1. **Forward Link**: From the current note to the target
-2. **Backlink**: From the target back to the current note
-
-Auto Keyword Linker leverages this to build your graph automatically:
-
-### Before Auto Keyword Linker
-```
-Your workflow:
-1. Write: "Discussed neural networks in the meeting"
-2. Manually edit: "Discussed [[Neural Networks]] in the meeting"
-3. Repeat for every mention in every note
-4. Often forget or skip linking due to tedium
-
-Result: Sparse graph with missing connections
-```
-
-### After Auto Keyword Linker
-```
-Your workflow:
-1. Write naturally: "Discussed neural networks in the meeting"
-2. Save (or run command)
-3. Plugin automatically:
-   - Links: "Discussed [[Neural Networks]] in the meeting"
-   - Adds tags: #neural-networks to both notes
-   - Updates statistics
-
-Result: Dense, comprehensive graph with dual discovery methods
-```
-
-### Graph Benefits in Practice
-
-**Discovering Patterns**: 
-- See which concepts appear together in your notes
-- Identify which projects share team members
-- Understand concept relationships through co-occurrence
-- 🆕 Use tag cloud to visualize topic frequency
-
-**Contextual Navigation**:
-- Click on a keyword in the graph to see all related notes
-- Use backlinks to find every discussion involving a person or topic
-- Navigate your knowledge by following connection threads
-- 🆕 Search by tags for alternative discovery paths
-
-**Knowledge Emergence**:
-- Patterns become visible that weren't apparent when writing individual notes
-- Related ideas cluster together in the graph view
-- 🆕 Tags create thematic groupings alongside link-based structure
-- Your vault becomes a true "second brain" with organic structure
-
-## 🎨 Interface
-
-### Settings Panel
-
-Access settings through: Settings → Plugin Options → Auto Keyword Linker
-
-**Keywords & Variations Section**:
-- Visual list of all keywords
-- Add new keywords with the "+ Add Keyword" button
-- Edit any keyword, target, or variations inline
-- 🆕 Toggle "Enable tags" checkbox for each keyword
-- Delete unwanted keywords with the "Delete" button
-
-<img width="937" height="324" alt="image" src="https://github.com/user-attachments/assets/33cab387-b82c-43cd-bf18-7aa384aa8a66" />
-
-**General Settings Section**:
-- Toggle switches for all behavioural options
-- Text input for folder paths and templates
-- Helpful descriptions for each setting
-<img width="977" height="537" alt="image" src="https://github.com/user-attachments/assets/a0135476-5b17-4b47-bbe0-057a5579705c" />
-
-### Command Palette
-
-Access all features through Obsidian's command palette (Ctrl/Cmd + P):
-- `Auto Keyword Linker: Link keywords in current note`
-- `Auto Keyword Linker: Preview keyword linking in current note`
-- `Auto Keyword Linker: Link keywords in all notes`
-- `Auto Keyword Linker: Preview keyword linking in all notes`
-- 🆕 `Auto Keyword Linker: View statistics`
-- 🆕 `Auto Keyword Linker: Export keywords to JSON`
-- 🆕 `Auto Keyword Linker: Import keywords from JSON`
-
-<img width="886" height="315" alt="image" src="https://github.com/user-attachments/assets/08d1aee9-485c-4c1e-ad54-4794bd73c760" />
-
-### Preview Modal
-
-When using preview commands, a modal displays:
-- **File name**: Which note(s) will be affected
-- **Link count**: How many links will be created
-- **Change list**: Each keyword with its target and surrounding context
-- **Action buttons**: Apply changes or cancel
-
-### 🆕 Statistics Modal
-
-View comprehensive statistics about your linking activity:
-- **Total Links Created**: All-time count
-- **Total Notes Processed**: Number of processed notes
-- **Total Keywords Configured**: Current keyword count
-- **Last Run Date**: Timestamp of last operation
-- **Keyword Breakdown**: Complete list with variations and tag status
-
-### 🆕 Import Modal
-
-Select JSON files from your vault to import:
-- **File Selector**: Dropdown of all JSON files
-- **Smart Merging**: Automatically handles duplicates
-- **Import Summary**: Shows what was added/merged
-- **Safe Import**: Adds to existing keywords without overwriting
-
-## ⚙️ Configuration Example
-
-Here's a complete example configuration for a personal vault:
-
-```javascript
-Keywords:
-1. Keyword: Alice Johnson
-   Target: People/Alice Johnson
-   Variations: Alice, A.J., AJ
-   Enable Tags: ✓
-
-2. Keyword: Project Momentum
-   Target: Projects/Momentum Initiative
-   Variations: Momentum, Proj Momentum, momentum project
-   Enable Tags: ✓
-
-3. Keyword: Machine Learning
-   Target: Concepts/Machine Learning
-   Variations: ML, machine learning, machine-learning
-   Enable Tags: ✓
-
-Settings:
-- First occurrence only: Enabled
-- Case sensitive: Disabled
-- Auto-create notes: Enabled
-- New note folder: "People"
-- Auto-link on save: Enabled
-```
-
-With this setup:
-- Writing "met with Alice about Momentum" automatically becomes "met with [[People/Alice Johnson|Alice]] about [[Projects/Momentum Initiative|Momentum]]"
-- Tags are added: #alice-johnson and #project-momentum
-- The "People/Alice Johnson" note shows backlinks to every mention across your vault
-- Tag search reveals all Alice-related or Momentum-related notes
-- The graph view displays connections between people, projects, and concepts
-- New person notes are automatically created in the "People" folder when first mentioned
-- Statistics track your knowledge graph growth
-
-## 🛡️ Safety Features
-
-### File Type Protection
-- **Markdown Only**: Processes only `.md` files
-- **Attachment Safety**: Completely ignores `.pdf`, `.docx`, `.png`, `.jpg`, and all other attachments
-- **Multiple Checks**: Validates file extension at multiple points to prevent errors
-- 🆕 **Recursion Prevention**: Tracks currently-processing files to avoid infinite loops
-
-### Content Protection
-- **Existing Links**: Never modifies text already inside `[[wiki links]]`
-- **Code Blocks**: Preserves code fences (```) and inline code (`)
-- **Markdown Links**: Respects `[text](url)` style links
-- **Image Links**: Doesn't interfere with `![[image.png]]` embeds
-- **Frontmatter Safety**: Completely skips YAML frontmatter
-- **Alias Protection**: Doesn't modify alias portions of links
-- 🆕 **Hashtag Protection**: Skips keywords that are already tags (preceded by #)
-- 🆕 **URL Protection**: Enhanced detection prevents linking keywords in web addresses
-
-### 🆕 Tag Protection
-- **Duplicate Prevention**: Checks for existing tags before adding
-- **Clean Placement**: Tags added consistently at note end
-- **Debounced Addition**: 1-second delay prevents conflicts during rapid saves
-- **Smart Formatting**: Multiple tags combined on single line
-- **Cursor Preservation**: Cursor position maintained when tags are added
-
-### Duplicate Prevention
-- **Vault-Wide Search**: Checks entire vault before creating new notes
-- **Smart Linking**: Links to existing notes regardless of location
-- **No Duplicates**: Won't create "Note.md" if it exists anywhere in your vault
-
-## 📈 Best Practices
-
-### Starting Out
-
-1. **Start Small**: Begin with 5-10 important keywords (key people, projects, concepts)
-2. **Test with Preview**: Use preview mode to understand how the plugin works
-3. **Single Note First**: Test on one note before processing your entire vault
-4. **Review Settings**: Ensure "First occurrence only" is enabled for readability
-5. 🆕 **Export Baseline**: Export your initial keyword configuration as a backup
-
-### Keyword Selection
-
-**Good Candidates**:
-- People's names (colleagues, authors, historical figures)
-- Project names
-- Core concepts in your field
-- Company or organisation names
-- Recurring topics or themes
-
-**Avoid**:
-- Common words ("the", "and", "is")
-- Words that appear in many contexts ("project", "meeting", "work")
-- Single letters (unless used as known abbreviations)
-
-### 🆕 Tag Strategy
-
-**When to Enable Tags**:
-- **High-value keywords**: People, projects, core concepts
-- **Discovery needs**: Topics you search for frequently
-- **Category building**: When you want thematic groupings
-- **Multi-vault workflows**: Tags sync better across different tools
-
-**When to Skip Tags**:
-- **Very common keywords**: Would create tag clutter
-- **Temporary topics**: Short-lived projects or one-off mentions
-- **Link-only workflows**: If you primarily use graph view navigation
-
-### Variations Strategy
-
-**When to Use Variations**:
-- Multiple name formats: "Dr. Jane Smith", "Jane Smith", "J. Smith", "Jane"
-- Acronyms: "Machine Learning" → "ML"
-- Nicknames: "Robert" → "Bob", "Rob"
-- Alternative spellings: "Organisation" → "Organization"
-
-**Keep it Reasonable**:
-- Don't add variations that might cause false matches
-- Be specific enough to avoid linking unrelated terms
-- Test variations with preview mode before bulk application
-
-### Folder Organisation
-
-Organise your vault with dedicated folders for different note types:
-
+Consider organizing by type:
 ```
 /People
   - Alice Johnson.md
@@ -601,7 +609,7 @@ Organise your vault with dedicated folders for different note types:
 
 Set "New note folder" based on the type of keywords you're adding. For person keywords, use "People"; for project keywords, use "Projects".
 
-### 🆕 Backup and Migration
+### Backup and Migration
 
 - **Regular Exports**: Export keywords monthly as backup
 - **Pre-bulk Operations**: Always export before running "Link keywords in all notes"
@@ -613,34 +621,40 @@ Set "New note folder" based on the type of keywords you're adding. For person ke
 
 - **Regular Review**: Periodically review your keywords list and remove outdated entries
 - **Add as You Go**: When you notice yourself typing the same term repeatedly, add it as a keyword
+- **🆕 Use Suggestions**: Run keyword suggestions monthly to discover emerging patterns
 - **Graph Analysis**: Use Obsidian's graph view to identify important nodes that should become keywords
 - **Backlink Audit**: Check backlinks on key notes to ensure all important connections are being made
-- 🆕 **Statistics Check**: Review statistics monthly to track growth and identify heavily-linked keywords
-- 🆕 **Tag Cleanup**: Periodically review tags to ensure consistency and remove obsolete ones
+- **Statistics Check**: Review statistics monthly to track growth and identify heavily-linked keywords
+- **Tag Cleanup**: Periodically review tags to ensure consistency and remove obsolete ones
+- **🆕 Scope Review**: Audit scoped keywords to ensure contexts are still relevant
 
 ## 🔧 Technical Details
 
 ### How It Works
 
-1. **Keyword Map Building**: Creates a map of all keywords (including variations) pointing to target notes with tag settings
-2. **Priority Sorting**: Sorts keywords by length (longest first) to avoid partial matches
-3. **Pattern Matching**: Uses regex with word boundaries to find exact matches
-4. **Context Checking**: Verifies each match isn't inside existing links, code, URLs, or hashtags
-5. **Safe Replacement**: Applies replacements in reverse order to preserve text positions
-6. 🆕 **Tag Collection**: Collects tags to add during linking process
-7. 🆕 **Debounced Tag Addition**: Adds tags after 1-second delay when using auto-link on save
-8. **File Modification**: Uses Obsidian's API to safely modify files
-9. 🆕 **Statistics Update**: Tracks and updates linking statistics
-10. 🆕 **Cursor Restoration**: Intelligently maintains cursor position through modifications
+1. **Keyword Map Building**: Creates a map of all keywords (including variations) with scope, target, and settings
+2. **🆕 Scope Filtering**: Filters keywords based on current note's folder path
+3. **Priority Sorting**: Sorts keywords by length (longest first) to avoid partial matches
+4. **Pattern Matching**: Uses regex with word boundaries to find exact matches
+5. **Context Checking**: Verifies each match isn't inside existing links, code, URLs, or hashtags
+6. **Safe Replacement**: Applies replacements in reverse order to preserve text positions
+7. **🆕 Link Generation**: Creates appropriate link format (absolute, relative, with block ref)
+8. **Tag Collection**: Collects tags to add during linking process
+9. **Debounced Tag Addition**: Adds tags after 1-second delay when using auto-link on save
+10. **File Modification**: Uses Obsidian's API to safely modify files
+11. **Statistics Update**: Tracks and updates linking statistics
+12. **Cursor Restoration**: Intelligently maintains cursor position through modifications
 
 ### Performance
 
-- **Efficient Processing**: Uses optimised regex patterns and early-exit logic
+- **Efficient Processing**: Uses optimized regex patterns and early-exit logic
 - **Batch Operations**: Processes multiple files efficiently for bulk operations
 - **Memory Safe**: Processes files one at a time to manage memory usage
 - **Non-Blocking**: Operations are asynchronous and don't freeze the UI
-- 🆕 **Debounced Tags**: Reduces unnecessary file operations during rapid saves
-- 🆕 **Smart Caching**: Tracks processing state to prevent redundant operations
+- **Debounced Tags**: Reduces unnecessary file operations during rapid saves
+- **Smart Caching**: Tracks processing state to prevent redundant operations
+- **🆕 Scope Optimization**: Only processes relevant keywords for each note
+- **🆕 Settings Sync**: Automatically syncs settings across devices every 15 seconds
 
 ### Compatibility
 
@@ -648,7 +662,8 @@ Set "New note folder" based on the type of keywords you're adding. For person ke
 - **Plugin API**: Uses official Obsidian API (no private APIs)
 - **Sync Compatible**: Works with Obsidian Sync, iCloud, and other sync solutions
 - **Cross-Platform**: Works on Windows, macOS, Linux, iOS, and Android
-- 🆕 **JSON Standard**: Import/export uses standard JSON format for maximum compatibility
+- **JSON Standard**: Import/export uses standard JSON format for maximum compatibility
+- **🆕 Relative Links**: Supports both absolute and relative path linking
 
 ## 🤝 Contributing
 
@@ -656,11 +671,14 @@ Contributions are welcome! Areas for potential improvement:
 
 - Additional template variables
 - More sophisticated pattern matching options
-- 🆕 CSV import/export in addition to JSON
+- CSV import/export in addition to JSON
 - Integration with other plugins
-- Performance optimisations
-- 🆕 Tag customization options (prefix, suffix, format)
-- 🆕 Scheduled/automatic linking operations
+- Performance optimizations
+- Tag customization options (prefix, suffix, format)
+- Scheduled/automatic linking operations
+- **🆕 AI-powered variation suggestions**
+- **🆕 Batch scope editing**
+- **🆕 Link format templates**
 
 ## 📝 License
 
@@ -700,14 +718,14 @@ Even with auto-link on save, periodically run "Link keywords in all notes" to ca
 
 Instead of linking to "Note.md", link to "People/Alice Johnson.md" or "Projects/Website Redesign.md". This makes your backlinks and graph more informative.
 
-### 🆕 Tip 6: Strategic Tag Usage
+### Tip 6: Strategic Tag Usage
 
 Don't enable tags for every keyword. Focus on:
 - High-level categories (people, projects, concepts)
 - Topics you search for frequently
 - Keywords that benefit from both link and tag discovery
 
-### 🆕 Tip 7: Export Before Major Changes
+### Tip 7: Export Before Major Changes
 
 Always export your keywords before:
 - Bulk processing your entire vault
@@ -715,7 +733,7 @@ Always export your keywords before:
 - Testing new variations or patterns
 - Sharing your vault with others
 
-### 🆕 Tip 8: Monitor Statistics
+### Tip 8: Monitor Statistics
 
 Review statistics monthly to:
 - Track knowledge graph growth
@@ -723,7 +741,7 @@ Review statistics monthly to:
 - Understand your linking patterns
 - Justify the plugin's value to yourself or team
 
-### 🆕 Tip 9: Import from Team Members
+### Tip 9: Import from Team Members
 
 If working in a shared vault:
 1. Each person configures their keywords
@@ -732,7 +750,7 @@ If working in a shared vault:
 4. Export the merged config
 5. Everyone imports the final version
 
-### 🆕 Tip 10: Use Tags for Alternative Discovery
+### Tip 10: Use Tags for Alternative Discovery
 
 When you can't remember which note mentioned something:
 1. Search by link/backlink (traditional method)
@@ -740,21 +758,60 @@ When you can't remember which note mentioned something:
 3. Use both for comprehensive results
 4. Tag pane shows all tagged notes at a glance
 
+### 🆕 Tip 11: Leverage Keyword Suggestions
+
+Monthly workflow:
+1. Run "Suggest keywords from notes"
+2. Sort by frequency
+3. Identify emerging themes/patterns
+4. Add top suggestions as keywords
+5. Your linking becomes more comprehensive over time
+
+### 🆕 Tip 12: Use Scoping for Ambiguous Terms
+
+When a word has multiple meanings:
+1. Create separate keywords with same name
+2. Set different scopes (folder-specific)
+3. Configure different targets
+4. Context determines which link is created
+
+### 🆕 Tip 13: Block References for Long Guides
+
+For reference documents:
+1. Add headings or block IDs to key sections
+2. Configure keywords with block references
+3. Links jump directly to relevant section
+4. Reduces friction in daily workflow
+
+### 🆕 Tip 14: Relative Links for Portable Vaults
+
+If you frequently reorganize:
+1. Enable "Use relative links" for relevant keywords
+2. Folder moves don't break links as easily
+3. Better for vaults shared across different systems
+
 ---
 
 ## 🆕 What's New in This Version
 
 ### Major Features
+- **AI-Powered Keyword Suggestions**: Automatically discover keywords from your notes with frequency analysis
+- **Link Scoping System**: Control where keywords link with vault-wide or folder-specific scoping
+- **Relative Link Support**: Option to create relative path links instead of absolute paths
+- **Block Reference Linking**: Link directly to specific blocks or headings within notes
 - **Tag Management System**: Automatically add tags to source and target notes
 - **Import/Export**: Backup and share keyword configurations via JSON
 - **Statistics Tracking**: Monitor linking activity and keyword usage
 - **Enhanced Auto-Save**: Improved cursor management and debounced tag addition
 
 ### Improvements
+- **Settings Sync**: Automatic background syncing of settings across devices (15-second intervals)
 - **Hashtag Protection**: Skips keywords that are already tags
 - **Recursion Prevention**: Prevents infinite loops during auto-save
 - **Better Cursor Handling**: Maintains cursor position through all modifications
 - **Smart Tag Timing**: 1-second debounce prevents save conflicts
+- **Stop Word Filtering**: Intelligent filtering of common words in suggestions
+- **Interactive UI**: Search, sort, and bulk select in suggestion modal
 
 ### Bug Fixes
 - Fixed attachment processing issues
@@ -766,4 +823,4 @@ When you can't remember which note mentioned something:
 
 **Built with ❤️ for the Obsidian community**
 
-Transform your note-taking workflow and watch your knowledge graph grow organically. Install Auto Keyword Linker today and experience the power of automated, intelligent linking with the added benefit of automatic tag management and comprehensive statistics tracking.
+Transform your note-taking workflow and watch your knowledge graph grow organically. Install Auto Keyword Linker today and experience the power of automated, intelligent linking with AI-powered suggestions, advanced scoping, tag management, and comprehensive statistics tracking.
