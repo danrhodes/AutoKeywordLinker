@@ -32,10 +32,10 @@ One of the most powerful features of this plugin is its ability to **automatical
 - **Granular Control**: Link keywords in a single note or across your entire vault
 
 - **🆕 Scoped Linking**: Restrict keywords to specific folders for context-aware linking
-- Vault Wide: Links the keyword anywhere in your vault
-- Same folder only: Links keywords ONLY to target notes in the same folder as the current note being processed.
-- Source in specific folder: Links keywords ONLY when the current note (source) is in a specified folder. A folder must be set.
-- Target in specific folder: Links keywords ONLY to target notes in a specified folder. A folder must be set.
+- **Vault Wide**: Links the keyword anywhere in your vault
+- **Same folder only**: Links keywords ONLY to target notes in the same folder as the current note being processed.
+- **Source in specific folder**: Links keywords ONLY when the current note (source) is in a specified folder. A folder must be set.
+- **Target in specific folder**: Links keywords ONLY to target notes in a specified folder. A folder must be set.
 
 - **🆕 Relative Links**: Option to create relative path links instead of absolute paths
 - **🆕 Block References**: Link directly to specific blocks within notes
