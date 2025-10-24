@@ -422,12 +422,13 @@ Each keyword can be configured with:
 
 ## 🚀 Getting Started
 
-### Installation
+### Installation - using BRAT during the Obsidian Code Review period
 
 1. Open Obsidian Settings
 2. Go to Community Plugins and disable Safe Mode
-3. Click Browse and search for "Auto Keyword Linker"
+3. Click Browse and search for "BRAT"
 4. Click Install, then Enable
+5. Open BRAT settings and enter the URL to install the plugin https://github.com/danrhodes/AutoKeywordLinker
 
 ### Basic Setup
 
