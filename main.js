@@ -1,8 +1,8 @@
 // Import required Obsidian API components
-const { Plugin, PluginSettingTab, Setting, Notice, Modal, MarkdownView } = require('obsidian');
+const { Plugin, PluginSettingTab, Setting, Notice, Modal, MarkdownView, FuzzySuggestModal, Menu } = require('obsidian');
 
-// Stop words to exclude from keyword suggestions
-const STOP_WORDS = new Set([
+// Default stop words to exclude from keyword suggestions
+const DEFAULT_STOP_WORDS = [
     'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he', 'in', 'is', 'it',
     'its', 'of', 'on', 'that', 'the', 'to', 'was', 'will', 'with', 'the', 'this', 'but', 'they',
     'have', 'had', 'what', 'when', 'where', 'who', 'which', 'why', 'how', 'all', 'each', 'every',
@@ -16,21 +16,22 @@ const STOP_WORDS = new Set([
     'until', 'while', 'once', 'here', 'there', 'see', 'saw', 'seen', 'go', 'goes', 'going', 'gone',
     'went', 'want', 'wanted', 'make', 'made', 'use', 'used', 'using', 'day', 'days', 'way', 'ways',
     'thing', 'things', 'yes', 'no', 'okay', 'ok'
-]);
+];
 
 // Default settings that will be used when the plugin is first installed
 const DEFAULT_SETTINGS = {
     // Array of keyword objects, each containing the keyword, target note, and variations
     keywords: [
-        { keyword: 'Keyword1', target: 'Keyword1', variations: [], enableTags: false, linkScope: 'vault-wide', scopeFolder: '', useRelativeLinks: false, blockRef: '' },
-        { keyword: 'Keyword2', target: 'Keyword2', variations: [], enableTags: false, linkScope: 'vault-wide', scopeFolder: '', useRelativeLinks: false, blockRef: '' }
+        { keyword: 'Keyword1', target: 'Keyword1', variations: [], enableTags: false, linkScope: 'vault-wide', scopeFolder: '', useRelativeLinks: false, blockRef: '', requireTag: '', onlyInNotesLinkingTo: false, suggestMode: false },
+        { keyword: 'Keyword2', target: 'Keyword2', variations: [], enableTags: false, linkScope: 'vault-wide', scopeFolder: '', useRelativeLinks: false, blockRef: '', requireTag: '', onlyInNotesLinkingTo: false, suggestMode: false }
     ],
     autoLinkOnSave: false,          // Whether to automatically link keywords when saving a note
     caseSensitive: false,            // Whether keyword matching should be case-sensitive
     firstOccurrenceOnly: true,       // Whether to link only the first occurrence of each keyword
-    autoCreateNotes: true,           // Whether to automatically create notes that don't exist
+    autoCreateNotes: false,           // Whether to automatically create notes that don't exist
     newNoteFolder: '',               // Folder where new notes will be created (empty = root)
     newNoteTemplate: '# {{keyword}}\n\nCreated: {{date}}\n\n',  // Template for new notes
+    customStopWords: [],             // Additional stop words to exclude from keyword suggestions (appended to defaults)
     statistics: {                    // Statistics tracking
         totalLinksCreated: 0,
         totalNotesProcessed: 0,
@@ -87,18 +88,39 @@ module.exports = class AutoKeywordLinker extends Plugin {
             callback: () => this.showStatistics()
         });
 
-        // Register command: Export keywords
+        // Register command: Export keywords to JSON
         this.addCommand({
             id: 'export-keywords',
             name: 'Export keywords to JSON',
             callback: () => this.exportKeywords()
         });
 
-        // Register command: Import keywords
+        // Register command: Import keywords from JSON
         this.addCommand({
             id: 'import-keywords',
             name: 'Import keywords from JSON',
             callback: () => this.importKeywords()
+        });
+
+        // Register command: Download CSV template
+        this.addCommand({
+            id: 'download-csv-template',
+            name: 'Download CSV template',
+            callback: () => this.downloadCSVTemplate()
+        });
+
+        // Register command: Export keywords to CSV
+        this.addCommand({
+            id: 'export-keywords-csv',
+            name: 'Export keywords to CSV',
+            callback: () => this.exportKeywordsToCSV()
+        });
+
+        // Register command: Import keywords from CSV
+        this.addCommand({
+            id: 'import-keywords-csv',
+            name: 'Import keywords from CSV',
+            callback: () => this.importKeywordsFromCSV()
         });
 
         // Register command: Suggest keywords
@@ -108,15 +130,482 @@ module.exports = class AutoKeywordLinker extends Plugin {
             callback: () => this.suggestKeywords()
         });
 
+        // Register command: Suggest keywords from current note only
+        this.addCommand({
+            id: 'suggest-keywords-current-note',
+            name: 'Suggest keywords from current note only',
+            callback: () => this.suggestKeywordsFromCurrentNote()
+        });
+
+        // Register command: Accept all suggestions on current line
+        this.addCommand({
+            id: 'accept-suggestion-at-cursor',
+            name: 'Accept all suggestions on current line',
+            editorCallback: (editor) => this.acceptSuggestionAtCursor(editor),
+            hotkeys: [
+                {
+                    modifiers: ["Mod"],
+                    key: "Enter"
+                }
+            ]
+        });
+
+        // Register command: Accept all link suggestions in current note
+        this.addCommand({
+            id: 'accept-all-suggestions',
+            name: 'Accept all link suggestions in current note',
+            editorCallback: (editor) => this.acceptAllSuggestions(editor)
+        });
+
+        // Register command: Review link suggestions (opens modal)
+        this.addCommand({
+            id: 'review-link-suggestions',
+            name: 'Review link suggestions',
+            editorCallback: (editor) => this.reviewSuggestions(editor)
+        });
+
         // Add the settings tab to Obsidian's settings panel
         this.addSettingTab(new AutoKeywordLinkerSettingTab(this.app, this));
 
         // Add custom CSS styles for modals and UI on plugin load
         this.addCustomStyles();
 
+        // Set up context menu for suggested links
+        this.setupSuggestionContextMenu();
+
+        // Register markdown post-processor for suggested links (Reading mode)
+        this.registerMarkdownPostProcessor((element) => {
+            this.processSuggestedLinks(element);
+        });
+
+        // Set up Live Preview mode click handler
+        this.setupLivePreviewClickHandler();
+
+        // Register editor menu to add our option to right-click menu
+        this.registerEvent(
+            this.app.workspace.on('editor-menu', (menu, editor) => {
+                // Check if there are ANY suggestions in the entire document
+                const content = editor.getValue();
+                const spanPattern = /<span class="akl-suggested-link"[^>]*>([^<]+)<\/span>/;
+
+                if (spanPattern.test(content)) {
+                    // Add menu items at the top
+                    menu.addItem((item) => {
+                        item
+                            .setTitle('📋 Review all link suggestions...')
+                            .setIcon('list-checks')
+                            .onClick(() => {
+                                this.reviewSuggestions(editor);
+                            });
+                    });
+
+                    menu.addItem((item) => {
+                        item
+                            .setTitle('✓ Accept all suggestions on this line')
+                            .setIcon('check')
+                            .onClick(() => {
+                                this.acceptSuggestionAtCursor(editor);
+                            });
+                    });
+
+                    menu.addSeparator();
+                }
+            })
+        );
+
+        // Add status bar item for suggestion count
+        this.statusBarItem = this.addStatusBarItem();
+        this.updateStatusBar();
+
+        // Update status bar when active leaf changes
+        this.registerEvent(
+            this.app.workspace.on('active-leaf-change', () => {
+                this.updateStatusBar();
+            })
+        );
+
+        // Update status bar when editor changes
+        this.registerEvent(
+            this.app.workspace.on('editor-change', () => {
+                setTimeout(() => this.updateStatusBar(), 100);
+            })
+        );
+
         // If auto-link on save is enabled, set up the event listener
         if (this.settings.autoLinkOnSave) {
             this.setupAutoLinkOnSave();
+        }
+    }
+
+    /**
+     * Process suggested links in rendered markdown
+     */
+    processSuggestedLinks(element) {
+        const suggestedLinks = element.querySelectorAll('.akl-suggested-link');
+
+        suggestedLinks.forEach(span => {
+            // Add click handler - just make it clickable to show it's interactive
+            span.addEventListener('click', (evt) => {
+                evt.preventDefault();
+                evt.stopPropagation();
+
+                // Inform user they need to switch to edit mode
+                new Notice('Switch to edit mode to accept suggestions, or use the review modal');
+            });
+
+            // Handle right-click to show review option
+            span.addEventListener('contextmenu', (evt) => {
+                evt.preventDefault();
+                evt.stopPropagation();
+
+                const menu = new Menu();
+
+                // Option to review all suggestions (will need to switch to edit mode)
+                menu.addItem((item) => {
+                    item
+                        .setTitle('📋 Review link suggestions (opens in edit mode)')
+                        .setIcon('list-checks')
+                        .onClick(async () => {
+                            // Switch to edit mode first
+                            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+                            if (view) {
+                                await view.setState({mode: 'source'}, {});
+
+                                // Give it a moment to switch modes, then open review
+                                setTimeout(() => {
+                                    const editor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
+                                    if (editor) {
+                                        this.reviewSuggestions(editor);
+                                    }
+                                }, 100);
+                            }
+                        });
+                });
+
+                menu.showAtMouseEvent(evt);
+            });
+        });
+    }
+
+    /**
+     * Update status bar with suggestion count
+     */
+    updateStatusBar() {
+        if (!this.statusBarItem) return;
+
+        const editor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
+        if (!editor) {
+            this.statusBarItem.setText('');
+            this.statusBarItem.style.display = 'none';
+            return;
+        }
+
+        const content = editor.getValue();
+        const spanPattern = /<span class="akl-suggested-link"[^>]*>([^<]+)<\/span>/g;
+        const matches = content.match(spanPattern);
+        const count = matches ? matches.length : 0;
+
+        if (count > 0) {
+            this.statusBarItem.setText(`💡 ${count} link suggestion${count > 1 ? 's' : ''}`);
+            this.statusBarItem.style.cursor = 'pointer';
+            this.statusBarItem.style.display = 'inline-block';
+            this.statusBarItem.addClass('mod-clickable');
+            this.statusBarItem.setAttribute('aria-label', 'Click to review suggestions');
+
+            // Add click handler to open review modal
+            this.statusBarItem.onclick = () => {
+                const currentEditor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
+                if (currentEditor) {
+                    this.reviewSuggestions(currentEditor);
+                }
+            };
+        } else {
+            this.statusBarItem.setText('');
+            this.statusBarItem.style.display = 'none';
+            this.statusBarItem.onclick = null;
+        }
+    }
+
+    /**
+     * Set up context menu for suggested links
+     */
+    setupSuggestionContextMenu() {
+        this.registerDomEvent(document, 'contextmenu', (evt) => {
+            const target = evt.target;
+
+            // Check if right-click was on a suggested link
+            if (target && target.classList && target.classList.contains('akl-suggested-link')) {
+                evt.preventDefault();
+
+                // Create a context menu
+                const menu = new Menu();
+
+                menu.addItem((item) => {
+                    item
+                        .setTitle('Accept link suggestion')
+                        .setIcon('check')
+                        .onClick(() => {
+                            this.acceptSuggestionElement(target);
+                        });
+                });
+
+                menu.showAtMouseEvent(evt);
+            }
+        });
+    }
+
+    /**
+     * Set up click handler for Live Preview mode
+     */
+    setupLivePreviewClickHandler() {
+        this.registerDomEvent(document, 'click', (evt) => {
+            // Check if we're in a markdown view
+            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (!view) return;
+
+            const editor = view.editor;
+            if (!editor) return;
+
+            // Get the clicked position in the editor
+            const clickedElement = evt.target;
+
+            // Check if the clicked element or its parent has our suggestion class
+            let suggestionElement = null;
+            if (clickedElement.classList && clickedElement.classList.contains('akl-suggested-link')) {
+                suggestionElement = clickedElement;
+            } else if (clickedElement.parentElement && clickedElement.parentElement.classList &&
+                       clickedElement.parentElement.classList.contains('akl-suggested-link')) {
+                suggestionElement = clickedElement.parentElement;
+            }
+
+            if (suggestionElement) {
+                evt.preventDefault();
+                evt.stopPropagation();
+
+                // Get cursor position
+                const cursor = editor.getCursor();
+                const line = editor.getLine(cursor.line);
+
+                // Try to find suggestion at this line
+                this.showSuggestionMenuAtLine(editor, cursor.line, line, evt);
+            }
+        });
+
+        // Also handle right-click for Live Preview
+        this.registerDomEvent(document, 'contextmenu', (evt) => {
+            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (!view) return;
+
+            const editor = view.editor;
+            if (!editor) return;
+
+            const clickedElement = evt.target;
+
+            let suggestionElement = null;
+            if (clickedElement.classList && clickedElement.classList.contains('akl-suggested-link')) {
+                suggestionElement = clickedElement;
+            } else if (clickedElement.parentElement && clickedElement.parentElement.classList &&
+                       clickedElement.parentElement.classList.contains('akl-suggested-link')) {
+                suggestionElement = clickedElement.parentElement;
+            }
+
+            if (suggestionElement) {
+                evt.preventDefault();
+                evt.stopPropagation();
+
+                const cursor = editor.getCursor();
+                const line = editor.getLine(cursor.line);
+
+                this.showSuggestionMenuAtLine(editor, cursor.line, line, evt);
+            }
+        });
+    }
+
+    /**
+     * Show suggestion menu for a specific line
+     */
+    showSuggestionMenuAtLine(editor, lineNumber, lineText, evt) {
+        // Find all suggestion spans in this line
+        const spanPattern = /<span class="akl-suggested-link" data-target="([^"]*)" data-block="([^"]*)" data-use-relative="([^"]*)"[^>]*>([^<]+)<\/span>/g;
+        const matches = [...lineText.matchAll(spanPattern)];
+
+        if (matches.length === 0) return;
+
+        // If there's only one match, show menu for it
+        // If there are multiple, show menu for the first one (could be enhanced to detect which one was clicked)
+        const match = matches[0];
+        const targetNote = match[1];
+        const blockRef = match[2];
+        const useRelative = match[3] === 'true';
+        const matchText = match[4];
+
+        const menu = new Menu();
+
+        menu.addItem((item) => {
+            item
+                .setTitle(`Accept link suggestion: "${matchText}"`)
+                .setIcon('check')
+                .onClick(() => {
+                    this.acceptSuggestionInLine(editor, lineNumber, lineText, matchText, targetNote, blockRef, useRelative);
+                });
+        });
+
+        menu.showAtMouseEvent(evt);
+    }
+
+    /**
+     * Accept a suggestion in a specific line
+     */
+    acceptSuggestionInLine(editor, lineNumber, lineText, matchText, targetNote, blockRef, useRelative) {
+        // Find the exact span to replace
+        const spanPattern = new RegExp(`<span class="akl-suggested-link" data-target="${this.escapeRegex(targetNote)}" data-block="${this.escapeRegex(blockRef)}" data-use-relative="${useRelative ? 'true' : 'false'}"[^>]*>${this.escapeRegex(matchText)}</span>`);
+
+        if (!spanPattern.test(lineText)) return;
+
+        // Create the actual link
+        let link;
+        const targetWithBlock = blockRef ? `${targetNote}#${blockRef}` : targetNote;
+
+        if (useRelative) {
+            const encodedTarget = encodeURIComponent(targetNote) + '.md';
+            const blockPart = blockRef ? `#${blockRef}` : '';
+            link = `[${matchText}](${encodedTarget}${blockPart})`;
+        } else {
+            link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
+        }
+
+        // Replace in the line
+        const newLine = lineText.replace(spanPattern, link);
+        editor.setLine(lineNumber, newLine);
+
+        new Notice('Link suggestion accepted');
+
+        // Update status bar
+        setTimeout(() => this.updateStatusBar(), 100);
+    }
+
+    /**
+     * Review all link suggestions in a modal
+     */
+    reviewSuggestions(editor) {
+        const content = editor.getValue();
+        const suggestions = [];
+
+        // Parse all lines to find suggestions
+        const lines = content.split('\n');
+        const spanPattern = /<span class="akl-suggested-link" data-target="([^"]*)" data-block="([^"]*)" data-use-relative="([^"]*)"[^>]*>([^<]+)<\/span>/g;
+
+        lines.forEach((line, lineNumber) => {
+            let match;
+            spanPattern.lastIndex = 0; // Reset regex state
+            while ((match = spanPattern.exec(line)) !== null) {
+                suggestions.push({
+                    lineNumber: lineNumber,
+                    targetNote: match[1],
+                    blockRef: match[2],
+                    useRelative: match[3] === 'true',
+                    matchText: match[4],
+                    fullMatch: match[0]
+                });
+            }
+        });
+
+        if (suggestions.length === 0) {
+            new Notice('No link suggestions found in current note');
+            return;
+        }
+
+        // Open the review modal
+        new SuggestionReviewModal(this.app, editor, suggestions).open();
+    }
+
+    /**
+     * Accept all link suggestions on the current line
+     */
+    acceptSuggestionAtCursor(editor) {
+        const cursor = editor.getCursor();
+        let line = editor.getLine(cursor.line);
+
+        // Find ALL suggestion spans on this line
+        const spanPattern = /<span class="akl-suggested-link" data-target="([^"]*)" data-block="([^"]*)" data-use-relative="([^"]*)"[^>]*>([^<]+)<\/span>/g;
+        const matches = [...line.matchAll(spanPattern)];
+
+        if (matches.length === 0) {
+            new Notice('No link suggestions found on this line');
+            return;
+        }
+
+        // Process all matches - replace each span with its corresponding link
+        let acceptedCount = 0;
+        matches.forEach(match => {
+            const fullMatch = match[0];
+            const targetNote = match[1];
+            const blockRef = match[2];
+            const useRelative = match[3] === 'true';
+            const matchText = match[4];
+
+            // Create the actual link
+            let link;
+            const targetWithBlock = blockRef ? `${targetNote}#${blockRef}` : targetNote;
+
+            if (useRelative) {
+                const encodedTarget = encodeURIComponent(targetNote) + '.md';
+                const blockPart = blockRef ? `#${blockRef}` : '';
+                link = `[${matchText}](${encodedTarget}${blockPart})`;
+            } else {
+                link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
+            }
+
+            // Replace this span with the link
+            line = line.replace(fullMatch, link);
+            acceptedCount++;
+        });
+
+        // Update the line with all replacements
+        editor.setLine(cursor.line, line);
+
+        new Notice(`Accepted ${acceptedCount} link suggestion${acceptedCount > 1 ? 's' : ''} on this line`);
+
+        // Update status bar
+        setTimeout(() => this.updateStatusBar(), 100);
+    }
+
+    /**
+     * Accept all link suggestions in the current note
+     */
+    acceptAllSuggestions(editor) {
+        const content = editor.getValue();
+        let newContent = content;
+        let count = 0;
+
+        // Find all suggestion spans
+        const spanPattern = /<span class="akl-suggested-link" data-target="([^"]*)" data-block="([^"]*)" data-use-relative="([^"]*)"[^>]*>([^<]+)<\/span>/g;
+
+        newContent = content.replace(spanPattern, (match, targetNote, blockRef, useRelative, matchText) => {
+            count++;
+
+            // Create the actual link
+            let link;
+            const targetWithBlock = blockRef ? `${targetNote}#${blockRef}` : targetNote;
+
+            if (useRelative === 'true') {
+                const encodedTarget = encodeURIComponent(targetNote) + '.md';
+                const blockPart = blockRef ? `#${blockRef}` : '';
+                link = `[${matchText}](${encodedTarget}${blockPart})`;
+            } else {
+                link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
+            }
+
+            return link;
+        });
+
+        if (count > 0) {
+            editor.setValue(newContent);
+            new Notice(`Accepted ${count} link suggestion${count > 1 ? 's' : ''}`);
+            // Update status bar
+            setTimeout(() => this.updateStatusBar(), 100);
+        } else {
+            new Notice('No link suggestions found in current note');
         }
     }
 
@@ -166,6 +655,11 @@ module.exports = class AutoKeywordLinker extends Plugin {
                                 this.settings.statistics = DEFAULT_SETTINGS.statistics;
                             }
 
+                            // Ensure customStopWords exists and is an array
+                            if (!this.settings.customStopWords || !Array.isArray(this.settings.customStopWords)) {
+                                this.settings.customStopWords = DEFAULT_SETTINGS.customStopWords;
+                            }
+
                             // Ensure enableTags, linkScope, useRelativeLinks, and blockRef fields exist for all keywords
                             if (this.settings.keywords) {
                                 for (let keyword of this.settings.keywords) {
@@ -183,6 +677,12 @@ module.exports = class AutoKeywordLinker extends Plugin {
                                     }
                                     if (keyword.blockRef === undefined) {
                                         keyword.blockRef = '';
+                                    }
+                                    if (keyword.requireTag === undefined) {
+                                        keyword.requireTag = '';
+                                    }
+                                    if (keyword.onlyInNotesLinkingTo === undefined) {
+                                        keyword.onlyInNotesLinkingTo = false;
                                     }
                                 }
                             }
@@ -227,10 +727,154 @@ module.exports = class AutoKeywordLinker extends Plugin {
     }
 
     /**
+     * Download CSV template for bulk keyword import
+     */
+    async downloadCSVTemplate() {
+        try {
+            const headers = 'keyword,target,variations,enableTags,linkScope,scopeFolder,useRelativeLinks,blockRef,requireTag,onlyInNotesLinkingTo,suggestMode';
+            const example1 = 'Python,Languages/Python,"python|py|Python3",false,vault-wide,,false,,,false';
+            const example2 = 'JavaScript,Languages/JavaScript,"js|javascript",false,vault-wide,,false,,,false';
+            const example3 = 'API,Documentation/API,"api|REST API",false,same-folder,,false,,reviewed,true';
+
+            const csvContent = `${headers}\n${example1}\n${example2}\n${example3}\n`;
+
+            const filename = 'auto-keyword-linker-template.csv';
+            await this.app.vault.create(filename, csvContent);
+            new Notice(`CSV template downloaded: ${filename}`);
+        } catch (error) {
+            new Notice(`Template download failed: ${error.message}`);
+        }
+    }
+
+    /**
+     * Export keywords to CSV file
+     */
+    async exportKeywordsToCSV() {
+        try {
+            const headers = 'keyword,target,variations,enableTags,linkScope,scopeFolder,useRelativeLinks,blockRef,requireTag,onlyInNotesLinkingTo,suggestMode';
+            const rows = [headers];
+
+            for (let item of this.settings.keywords) {
+                // Convert variations array to pipe-separated string
+                const variations = (item.variations && item.variations.length > 0)
+                    ? `"${item.variations.join('|')}"`
+                    : '';
+
+                // Build CSV row
+                const row = [
+                    this.escapeCSV(item.keyword),
+                    this.escapeCSV(item.target),
+                    variations,
+                    item.enableTags || false,
+                    item.linkScope || 'vault-wide',
+                    this.escapeCSV(item.scopeFolder || ''),
+                    item.useRelativeLinks || false,
+                    this.escapeCSV(item.blockRef || ''),
+                    this.escapeCSV(item.requireTag || ''),
+                    item.onlyInNotesLinkingTo || false,
+                    item.suggestMode || false
+                ].join(',');
+
+                rows.push(row);
+            }
+
+            const csvContent = rows.join('\n');
+            const date = new Date().toISOString().split('T')[0];
+            const filename = `auto-keyword-linker-export-${date}.csv`;
+
+            await this.app.vault.create(filename, csvContent);
+            new Notice(`Keywords exported to ${filename}`);
+        } catch (error) {
+            new Notice(`CSV export failed: ${error.message}`);
+        }
+    }
+
+    /**
+     * Import keywords from CSV file
+     */
+    async importKeywordsFromCSV() {
+        new ImportCSVModal(this.app, this).open();
+    }
+
+    /**
+     * Escape CSV field if it contains special characters
+     */
+    escapeCSV(field) {
+        if (typeof field !== 'string') return field;
+        if (field.includes(',') || field.includes('"') || field.includes('\n')) {
+            return `"${field.replace(/"/g, '""')}"`;
+        }
+        return field;
+    }
+
+    /**
+     * Parse CSV line respecting quoted fields
+     */
+    parseCSVLine(line) {
+        const fields = [];
+        let currentField = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            const nextChar = line[i + 1];
+
+            if (char === '"' && inQuotes && nextChar === '"') {
+                // Escaped quote
+                currentField += '"';
+                i++; // Skip next quote
+            } else if (char === '"') {
+                // Toggle quote mode
+                inQuotes = !inQuotes;
+            } else if (char === ',' && !inQuotes) {
+                // Field separator
+                fields.push(currentField.trim());
+                currentField = '';
+            } else {
+                currentField += char;
+            }
+        }
+
+        // Add last field
+        fields.push(currentField.trim());
+
+        return fields;
+    }
+
+    /**
      * Open the Suggested Keyword Builder modal
      */
     async suggestKeywords() {
         new SuggestedKeywordBuilderModal(this.app, this).open();
+    }
+
+    /**
+     * Open the Suggested Keyword Builder modal for current note only
+     */
+    async suggestKeywordsFromCurrentNote() {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile) {
+            new Notice('No active note found. Please open a note first.');
+            return;
+        }
+        new SuggestedKeywordBuilderModal(this.app, this, activeFile).open();
+    }
+
+    /**
+     * Get combined stop words (default + custom)
+     * @returns {Set} Set of stop words to exclude
+     */
+    getStopWords() {
+        const stopWords = new Set(DEFAULT_STOP_WORDS);
+        // Add custom stop words from settings
+        if (this.settings.customStopWords && Array.isArray(this.settings.customStopWords)) {
+            for (let word of this.settings.customStopWords) {
+                if (word && typeof word === 'string') {
+                    stopWords.add(word.toLowerCase().trim());
+                }
+            }
+        }
+        return stopWords;
     }
 
     /**
@@ -241,6 +885,7 @@ module.exports = class AutoKeywordLinker extends Plugin {
      */
     extractWordsFromText(text, isTitle = false) {
         const words = [];
+        const stopWords = this.getStopWords();
 
         // Split by common delimiters
         let parts = text.split(/[\s\-_\/\\,;:]+/);
@@ -261,7 +906,7 @@ module.exports = class AutoKeywordLinker extends Plugin {
                 word = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
 
                 // Filter out stop words and short words
-                if (word.length >= 3 && !STOP_WORDS.has(word.toLowerCase())) {
+                if (word.length >= 3 && !stopWords.has(word.toLowerCase())) {
                     words.push(word);
                 }
             }
@@ -277,6 +922,7 @@ module.exports = class AutoKeywordLinker extends Plugin {
      */
     extractPhrasesFromText(text) {
         const phrases = [];
+        const stopWords = this.getStopWords();
 
         // Split into sentences/lines
         const lines = text.split(/[.\n]/);
@@ -291,7 +937,7 @@ module.exports = class AutoKeywordLinker extends Plugin {
 
                     // Check if phrase contains stop words only
                     const phraseWords = phrase.split(/\s+/);
-                    const hasNonStopWord = phraseWords.some(w => !STOP_WORDS.has(w.toLowerCase()));
+                    const hasNonStopWord = phraseWords.some(w => !stopWords.has(w.toLowerCase()));
 
                     if (hasNonStopWord && phrase.length >= 5) {
                         phrases.push(phrase);
@@ -322,6 +968,16 @@ module.exports = class AutoKeywordLinker extends Plugin {
             if (item.variations && item.variations.length > 0) {
                 for (let variation of item.variations) {
                     existingKeywords.add(variation.toLowerCase());
+                }
+            }
+        }
+
+        // Add auto-discovered aliases from frontmatter to existing keywords set
+        for (let item of this.settings.keywords) {
+            const aliases = this.getAliasesForNote(item.target);
+            if (aliases && aliases.length > 0) {
+                for (let alias of aliases) {
+                    existingKeywords.add(alias.toLowerCase());
                 }
             }
         }
@@ -362,7 +1018,13 @@ module.exports = class AutoKeywordLinker extends Plugin {
                 const limitedContent = content.substring(0, 5000);
 
                 // Remove frontmatter
-                const contentWithoutFrontmatter = limitedContent.replace(/^---[\s\S]*?---\n/, '');
+                let contentWithoutFrontmatter = limitedContent.replace(/^---[\s\S]*?---\n/, '');
+
+                // Remove all wikilinks [[link]] and [[link|alias]] - they're already keywords or shouldn't be suggested
+                contentWithoutFrontmatter = contentWithoutFrontmatter.replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '');
+
+                // Remove markdown links [text](url)
+                contentWithoutFrontmatter = contentWithoutFrontmatter.replace(/\[([^\]]+)\]\([^)]+\)/g, '');
 
                 const contentWords = this.extractWordsFromText(contentWithoutFrontmatter, false);
                 const contentPhrases = this.extractPhrasesFromText(contentWithoutFrontmatter);
@@ -415,6 +1077,145 @@ module.exports = class AutoKeywordLinker extends Plugin {
                 keyword: phrase,
                 count: data.count,
                 notes: Array.from(data.notes).slice(0, 5),
+                totalNotes: data.notes.size
+            });
+        }
+
+        // Sort by count (descending) then by keyword length (descending)
+        suggestions.sort((a, b) => {
+            if (b.count !== a.count) {
+                return b.count - a.count;
+            }
+            return b.keyword.length - a.keyword.length;
+        });
+
+        return suggestions;
+    }
+
+    /**
+     * Analyze a single note and extract keyword suggestions
+     * @param {TFile} file - The file to analyze
+     * @returns {Array} Array of suggestion objects with word, count, and notes
+     */
+    async analyzeCurrentNoteForKeywords(file) {
+        const wordFrequency = new Map(); // word -> { count, notes: Set }
+        const phraseFrequency = new Map(); // phrase -> { count, notes: Set }
+
+        // Get existing keywords (normalized to lowercase for comparison)
+        const existingKeywords = new Set(
+            this.settings.keywords.map(k => k.keyword.toLowerCase())
+        );
+
+        // Add variations to existing keywords set
+        for (let item of this.settings.keywords) {
+            if (item.variations && item.variations.length > 0) {
+                for (let variation of item.variations) {
+                    existingKeywords.add(variation.toLowerCase());
+                }
+            }
+        }
+
+        // Add auto-discovered aliases from frontmatter to existing keywords set
+        for (let item of this.settings.keywords) {
+            const aliases = this.getAliasesForNote(item.target);
+            if (aliases && aliases.length > 0) {
+                for (let alias of aliases) {
+                    existingKeywords.add(alias.toLowerCase());
+                }
+            }
+        }
+
+        // Extract from note title
+        const titleWords = this.extractWordsFromText(file.basename, true);
+        const titlePhrases = this.extractPhrasesFromText(file.basename);
+
+        // Add title words (weighted 3x)
+        for (let word of titleWords) {
+            if (!existingKeywords.has(word.toLowerCase())) {
+                if (!wordFrequency.has(word)) {
+                    wordFrequency.set(word, { count: 0, notes: new Set() });
+                }
+                const data = wordFrequency.get(word);
+                data.count += 3; // Weight title words higher
+                data.notes.add(file.basename);
+            }
+        }
+
+        // Add title phrases (weighted 3x)
+        for (let phrase of titlePhrases) {
+            if (!existingKeywords.has(phrase.toLowerCase())) {
+                if (!phraseFrequency.has(phrase)) {
+                    phraseFrequency.set(phrase, { count: 0, notes: new Set() });
+                }
+                const data = phraseFrequency.get(phrase);
+                data.count += 3;
+                data.notes.add(file.basename);
+            }
+        }
+
+        // Extract from note content (entire content for single note)
+        try {
+            const content = await this.app.vault.read(file);
+
+            // Remove frontmatter
+            let contentWithoutFrontmatter = content.replace(/^---[\s\S]*?---\n/, '');
+
+            // Remove all wikilinks [[link]] and [[link|alias]] - they're already keywords or shouldn't be suggested
+            contentWithoutFrontmatter = contentWithoutFrontmatter.replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '');
+
+            // Remove markdown links [text](url)
+            contentWithoutFrontmatter = contentWithoutFrontmatter.replace(/\[([^\]]+)\]\([^)]+\)/g, '');
+
+            const contentWords = this.extractWordsFromText(contentWithoutFrontmatter, false);
+            const contentPhrases = this.extractPhrasesFromText(contentWithoutFrontmatter);
+
+            // Add content words (normal weight)
+            for (let word of contentWords) {
+                if (!existingKeywords.has(word.toLowerCase())) {
+                    if (!wordFrequency.has(word)) {
+                        wordFrequency.set(word, { count: 0, notes: new Set() });
+                    }
+                    const data = wordFrequency.get(word);
+                    data.count += 1;
+                    data.notes.add(file.basename);
+                }
+            }
+
+            // Add content phrases (normal weight)
+            for (let phrase of contentPhrases) {
+                if (!existingKeywords.has(phrase.toLowerCase())) {
+                    if (!phraseFrequency.has(phrase)) {
+                        phraseFrequency.set(phrase, { count: 0, notes: new Set() });
+                    }
+                    const data = phraseFrequency.get(phrase);
+                    data.count += 1;
+                    data.notes.add(file.basename);
+                }
+            }
+        } catch (error) {
+            console.log(`Error reading ${file.path}:`, error);
+            throw error;
+        }
+
+        // Combine words and phrases into suggestions
+        const suggestions = [];
+
+        // Add word suggestions
+        for (let [word, data] of wordFrequency) {
+            suggestions.push({
+                keyword: word,
+                count: data.count,
+                notes: Array.from(data.notes),
+                totalNotes: data.notes.size
+            });
+        }
+
+        // Add phrase suggestions
+        for (let [phrase, data] of phraseFrequency) {
+            suggestions.push({
+                keyword: phrase,
+                count: data.count,
+                notes: Array.from(data.notes),
                 totalNotes: data.notes.size
             });
         }
@@ -536,12 +1337,15 @@ module.exports = class AutoKeywordLinker extends Plugin {
         // If not preview mode and changes were made, show success message
         else if (!preview && results && results.changed) {
             new Notice(`Linked ${results.linkCount} keyword(s) in current note!`);
-            
+
             // Update statistics
             this.settings.statistics.totalLinksCreated += results.linkCount;
             this.settings.statistics.totalNotesProcessed += 1;
             this.settings.statistics.lastRunDate = new Date().toISOString();
             await this.saveSettings();
+
+            // Update status bar to reflect new suggestions
+            setTimeout(() => this.updateStatusBar(), 100);
         } 
         // If not preview mode and no changes were made, inform user
         else if (!preview) {
@@ -666,15 +1470,29 @@ module.exports = class AutoKeywordLinker extends Plugin {
             const scopeFolder = keywordMap[keyword].scopeFolder || '';
             const useRelativeLinks = keywordMap[keyword].useRelativeLinks || false;
             const blockRef = keywordMap[keyword].blockRef || '';
+            const requireTag = keywordMap[keyword].requireTag || '';
+            const onlyInNotesLinkingTo = keywordMap[keyword].onlyInNotesLinkingTo || false;
+            const suggestMode = keywordMap[keyword].suggestMode || false;
+            const keywordIndex = keywordMap[keyword].keywordIndex;
 
             // Skip empty keywords or targets
             if (!keyword.trim() || !target || !target.trim()) continue;
+
+            // Check if we should only link in notes that already link to target
+            if (onlyInNotesLinkingTo && !this.noteHasLinkToTarget(file, target)) {
+                continue;
+            }
+
+            // Check if target note has required tag - skip this keyword if tag requirement not met
+            if (!this.noteHasTag(target, requireTag)) {
+                continue;
+            }
 
             // Check link scope - skip this keyword if scope conditions aren't met
             if (!this.checkLinkScope(file, target, linkScope, scopeFolder)) {
                 continue;
             }
-            
+
             // If auto-create is enabled, ensure the target note exists
             if (this.settings.autoCreateNotes) {
                 await this.ensureNoteExists(target);
@@ -728,30 +1546,56 @@ module.exports = class AutoKeywordLinker extends Plugin {
                 // For firstOccurrenceOnly, skip if we already found this keyword
                 if (this.settings.firstOccurrenceOnly) {
                     const keyLower = keyword.toLowerCase();
+
+                    // Check if we already found this keyword in THIS execution
                     if (foundKeywords.has(keyLower)) {
                         break;  // Stop looking for this keyword
                     }
+
+                    // Also check if the keyword is already linked or suggested in the document content
+                    // This handles cases where the keyword was linked/suggested in a previous execution
+                    const existingLinkPattern = this.settings.caseSensitive
+                        ? new RegExp(`\\[\\[([^\\]]+\\|)?${this.escapeRegex(keyword)}\\]\\]`)
+                        : new RegExp(`\\[\\[([^\\]]+\\|)?${this.escapeRegex(keyword)}\\]\\]`, 'i');
+
+                    const existingSuggestPattern = this.settings.caseSensitive
+                        ? new RegExp(`<span class="akl-suggested-link"[^>]*>${this.escapeRegex(keyword)}</span>`)
+                        : new RegExp(`<span class="akl-suggested-link"[^>]*>${this.escapeRegex(keyword)}</span>`, 'i');
+
+                    if (existingLinkPattern.test(content) || existingSuggestPattern.test(content)) {
+                        break;  // Already linked or suggested in document, skip this keyword entirely
+                    }
+
                     foundKeywords.add(keyLower);
                 }
 
-                // Check if we're inside a table - if so, avoid using pipe syntax in links
+                // Check if we're inside a table
                 const insideTable = this.isInsideTable(content, matchIndex);
 
                 // Prepare target with optional block reference
                 const targetWithBlock = blockRef ? `${target}#${blockRef}` : target;
 
-                // Create replacement link
+                // Create replacement link or suggestion
                 let replacement;
-                if (useRelativeLinks) {
+                if (suggestMode) {
+                    // Suggest mode: create HTML span instead of actual link
+                    const escapedTarget = target.replace(/"/g, '&quot;');
+                    const escapedBlock = blockRef.replace(/"/g, '&quot;');
+                    const useRelative = useRelativeLinks ? 'true' : 'false';
+                    replacement = `<span class="akl-suggested-link" data-target="${escapedTarget}" data-block="${escapedBlock}" data-use-relative="${useRelative}" data-keyword-index="${keywordIndex}">${matchText}</span>`;
+                } else if (useRelativeLinks) {
                     // Use relative markdown link format: [text](Target%20Note.md#^block-id)
                     const encodedTarget = encodeURIComponent(target) + '.md';
                     const blockPart = blockRef ? `#${blockRef}` : '';
                     replacement = `[${matchText}](${encodedTarget}${blockPart})`;
                 } else if (insideTable) {
-                    // Inside table: always use simple format [[target#^block-id]] to avoid pipe conflicts
-                    replacement = `[[${targetWithBlock}]]`;
+                    // Inside table: use markdown link format to avoid pipe conflicts
+                    // Format: [displayText](Target%20Note.md#^block-id)
+                    const encodedTarget = encodeURIComponent(target) + '.md';
+                    const blockPart = blockRef ? `#${blockRef}` : '';
+                    replacement = `[${matchText}](${encodedTarget}${blockPart})`;
                 } else {
-                    // Outside table: use alias format [[target#^block-id|matchText]] if target differs from match text
+                    // Outside table: use wikilink alias format [[target#^block-id|matchText]]
                     replacement = target === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
                 }
                 
@@ -1518,7 +2362,11 @@ module.exports = class AutoKeywordLinker extends Plugin {
                 linkScope: item.linkScope || 'vault-wide',
                 scopeFolder: item.scopeFolder || '',
                 useRelativeLinks: item.useRelativeLinks || false,
-                blockRef: item.blockRef || ''
+                blockRef: item.blockRef || '',
+                requireTag: item.requireTag || '',
+                onlyInNotesLinkingTo: item.onlyInNotesLinkingTo || false,
+                suggestMode: item.suggestMode || false,
+                keywordIndex: this.settings.keywords.indexOf(item)
             };
 
             // Add all manual variations, all pointing to the same target with same settings
@@ -1531,7 +2379,11 @@ module.exports = class AutoKeywordLinker extends Plugin {
                             linkScope: item.linkScope || 'vault-wide',
                             scopeFolder: item.scopeFolder || '',
                             useRelativeLinks: item.useRelativeLinks || false,
-                            blockRef: item.blockRef || ''
+                            blockRef: item.blockRef || '',
+                            requireTag: item.requireTag || '',
+                            onlyInNotesLinkingTo: item.onlyInNotesLinkingTo || false,
+                            suggestMode: item.suggestMode || false,
+                            keywordIndex: this.settings.keywords.indexOf(item)
                         };
                     }
                 }
@@ -1550,7 +2402,11 @@ module.exports = class AutoKeywordLinker extends Plugin {
                                 linkScope: item.linkScope || 'vault-wide',
                                 scopeFolder: item.scopeFolder || '',
                                 useRelativeLinks: item.useRelativeLinks || false,
-                                blockRef: item.blockRef || ''
+                                blockRef: item.blockRef || '',
+                                requireTag: item.requireTag || '',
+                                onlyInNotesLinkingTo: item.onlyInNotesLinkingTo || false,
+                                suggestMode: item.suggestMode || false,
+                                keywordIndex: this.settings.keywords.indexOf(item)
                             };
                         }
                     }
@@ -1720,6 +2576,169 @@ module.exports = class AutoKeywordLinker extends Plugin {
     }
 
     /**
+     * Check if a note has a required tag (in frontmatter or inline)
+     * @param {string} noteName - Name of the note (with or without .md extension)
+     * @param {string} requiredTag - The tag to check for (without # prefix)
+     * @returns {boolean} True if note has the tag, false otherwise
+     */
+    noteHasTag(noteName, requiredTag) {
+        try {
+            // If no tag required, return true (no restriction)
+            if (!requiredTag || requiredTag.trim() === '') {
+                return true;
+            }
+
+            // Normalize the required tag (remove # if present)
+            const normalizedTag = requiredTag.trim().replace(/^#/, '').toLowerCase();
+
+            // Find the file - try with and without .md extension
+            let targetFile = null;
+            const files = this.app.vault.getMarkdownFiles();
+            const noteBasename = noteName.replace(/\.md$/, '');
+
+            for (let file of files) {
+                // Check if basename matches (case-insensitive for better matching)
+                if (file.basename.toLowerCase() === noteBasename.toLowerCase()) {
+                    targetFile = file;
+                    break;
+                }
+                // Also check full path without extension (for notes in folders)
+                const pathWithoutExt = file.path.endsWith('.md') ? file.path.slice(0, -3) : file.path;
+                if (pathWithoutExt.toLowerCase() === noteBasename.toLowerCase()) {
+                    targetFile = file;
+                    break;
+                }
+            }
+
+            // If file not found, return false (can't verify tag)
+            if (!targetFile) {
+                return false;
+            }
+
+            // Use Obsidian's metadataCache to get tags
+            const cache = this.app.metadataCache.getFileCache(targetFile);
+            if (!cache) {
+                return false;
+            }
+
+            // Check frontmatter tags
+            if (cache.frontmatter) {
+                const frontmatter = cache.frontmatter;
+                let frontmatterTags = [];
+
+                // Check for 'tags' field (most common)
+                if (frontmatter.tags) {
+                    if (Array.isArray(frontmatter.tags)) {
+                        frontmatterTags = frontmatter.tags;
+                    } else if (typeof frontmatter.tags === 'string') {
+                        frontmatterTags = [frontmatter.tags];
+                    }
+                }
+
+                // Check for 'tag' field (singular)
+                if (frontmatter.tag) {
+                    if (Array.isArray(frontmatter.tag)) {
+                        frontmatterTags = frontmatterTags.concat(frontmatter.tag);
+                    } else if (typeof frontmatter.tag === 'string') {
+                        frontmatterTags.push(frontmatter.tag);
+                    }
+                }
+
+                // Normalize and check frontmatter tags
+                for (let tag of frontmatterTags) {
+                    if (typeof tag === 'string') {
+                        const normalized = tag.replace(/^#/, '').toLowerCase();
+                        if (normalized === normalizedTag) {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // Check inline tags (from metadataCache)
+            if (cache.tags) {
+                for (let tagInfo of cache.tags) {
+                    // tagInfo.tag includes the # prefix
+                    const normalized = tagInfo.tag.replace(/^#/, '').toLowerCase();
+                    if (normalized === normalizedTag) {
+                        return true;
+                    }
+                }
+            }
+
+            // Tag not found
+            return false;
+        } catch (error) {
+            console.error('Error checking tag for note:', noteName, error);
+            return false;
+        }
+    }
+
+    /**
+     * Check if a note has an existing link to a target note
+     * @param {TFile} sourceFile - The source file to check
+     * @param {string} targetNoteName - The target note name to look for links to
+     * @returns {boolean} True if the source note has at least one link to the target note
+     */
+    noteHasLinkToTarget(sourceFile, targetNoteName) {
+        try {
+            // If no file provided, return false
+            if (!sourceFile) {
+                return false;
+            }
+
+            // Use Obsidian's metadataCache to get all links from the source file
+            const cache = this.app.metadataCache.getFileCache(sourceFile);
+            if (!cache || !cache.links || cache.links.length === 0) {
+                return false;
+            }
+
+            // Normalize target note name (remove .md extension if present)
+            const normalizedTarget = targetNoteName.replace(/\.md$/, '').toLowerCase();
+
+            // Check each link in the source file
+            for (let link of cache.links) {
+                // link.link is the raw link destination (e.g., "Languages/Python" or "Python")
+                const linkDest = link.link.toLowerCase();
+
+                // Direct match
+                if (linkDest === normalizedTarget) {
+                    return true;
+                }
+
+                // Check if link destination ends with the target (handles paths)
+                // e.g., link: "Languages/Python" matches target: "Python"
+                if (linkDest.endsWith('/' + normalizedTarget)) {
+                    return true;
+                }
+
+                // Check if target ends with the link (handles partial paths)
+                // e.g., link: "Python" matches target: "Languages/Python"
+                if (normalizedTarget.endsWith('/' + linkDest)) {
+                    return true;
+                }
+
+                // Try to resolve the link to an actual file and compare basenames
+                const linkedFile = this.app.metadataCache.getFirstLinkpathDest(link.link, sourceFile.path);
+                if (linkedFile) {
+                    const linkedBasename = linkedFile.basename.toLowerCase();
+                    const targetBasename = normalizedTarget.split('/').pop();
+
+                    if (linkedBasename === targetBasename) {
+                        return true;
+                    }
+                }
+            }
+
+            // No matching link found
+            return false;
+        } catch (error) {
+            console.error('Error checking links in note:', sourceFile.path, error);
+            return false;
+        }
+    }
+
+    /**
      * Ensure a note exists, creating it if necessary
      * @param {string} noteName - Name of the note to ensure exists
      */
@@ -1790,6 +2809,11 @@ module.exports = class AutoKeywordLinker extends Plugin {
             this.settings.statistics = DEFAULT_SETTINGS.statistics;
         }
 
+        // Ensure customStopWords exists and is an array
+        if (!this.settings.customStopWords || !Array.isArray(this.settings.customStopWords)) {
+            this.settings.customStopWords = DEFAULT_SETTINGS.customStopWords;
+        }
+
         // Ensure enableTags and linkScope fields exist for all keywords
         if (this.settings.keywords) {
             for (let keyword of this.settings.keywords) {
@@ -1801,6 +2825,15 @@ module.exports = class AutoKeywordLinker extends Plugin {
                 }
                 if (keyword.scopeFolder === undefined) {
                     keyword.scopeFolder = '';
+                }
+                if (keyword.requireTag === undefined) {
+                    keyword.requireTag = '';
+                }
+                if (keyword.onlyInNotesLinkingTo === undefined) {
+                    keyword.onlyInNotesLinkingTo = false;
+                }
+                if (keyword.suggestMode === undefined) {
+                    keyword.suggestMode = false;
                 }
             }
         }
@@ -1995,9 +3028,27 @@ module.exports = class AutoKeywordLinker extends Plugin {
                 color: white;
             }
 
+            .akl-badge-suggest {
+                background: #ffaa00;
+                color: white;
+            }
+
             .akl-badge-variations {
                 background: var(--background-modifier-border);
                 color: var(--text-muted);
+            }
+
+            /* Suggested Link Styles */
+            .akl-suggested-link {
+                background-color: rgba(255, 170, 0, 0.15);
+                border-bottom: 2px dotted #ffaa00;
+                cursor: pointer;
+                position: relative;
+                transition: background-color 0.2s ease;
+            }
+
+            .akl-suggested-link:hover {
+                background-color: rgba(255, 170, 0, 0.25);
             }
 
             /* Card Body */
@@ -2501,9 +3552,10 @@ class StatisticsModal extends Modal {
  * Analyzes notes and suggests keywords to add
  */
 class SuggestedKeywordBuilderModal extends Modal {
-    constructor(app, plugin) {
+    constructor(app, plugin, currentFile = null) {
         super(app);
         this.plugin = plugin;
+        this.currentFile = currentFile; // If provided, analyze only this file
         this.suggestions = [];
         this.selectedSuggestions = new Map(); // keyword -> { selected: boolean, addAsVariationTo: string|null }
         this.isAnalyzing = true;
@@ -2516,21 +3568,34 @@ class SuggestedKeywordBuilderModal extends Modal {
         contentEl.addClass('akl-suggestion-modal');
 
         // Title
-        contentEl.createEl('h2', {text: 'Suggested Keyword Builder'});
+        const titleText = this.currentFile
+            ? `Suggested Keyword Builder - ${this.currentFile.basename}`
+            : 'Suggested Keyword Builder';
+        contentEl.createEl('h2', {text: titleText});
 
         // Status area
         const statusEl = contentEl.createDiv({cls: 'akl-status'});
-        statusEl.createEl('p', {text: 'Analyzing your notes...', cls: 'akl-analyzing'});
+        const analyzeText = this.currentFile
+            ? 'Analyzing current note...'
+            : 'Analyzing your notes...';
+        statusEl.createEl('p', {text: analyzeText, cls: 'akl-analyzing'});
 
         // Start analysis
         try {
-            this.suggestions = await this.plugin.analyzeNotesForKeywords();
+            // Use different analysis method based on scope
+            if (this.currentFile) {
+                this.suggestions = await this.plugin.analyzeCurrentNoteForKeywords(this.currentFile);
+            } else {
+                this.suggestions = await this.plugin.analyzeNotesForKeywords();
+            }
             this.isAnalyzing = false;
 
             // Update status
             statusEl.empty();
+            const noteCount = this.currentFile ? 1 : this.plugin.app.vault.getMarkdownFiles().length;
+            const noteText = noteCount === 1 ? 'note' : 'notes';
             statusEl.createEl('p', {
-                text: `Found ${this.suggestions.length} suggestions from ${this.plugin.app.vault.getMarkdownFiles().length} notes`,
+                text: `Found ${this.suggestions.length} suggestions from ${noteCount} ${noteText}`,
                 cls: 'akl-stats'
             });
 
@@ -2963,6 +4028,212 @@ class ImportModal extends Modal {
 }
 
 /**
+ * Import CSV Modal
+ */
+class ImportCSVModal extends Modal {
+    constructor(app, plugin) {
+        super(app);
+        this.plugin = plugin;
+    }
+
+    onOpen() {
+        const {contentEl} = this;
+        contentEl.createEl('h2', {text: 'Import Keywords from CSV'});
+
+        contentEl.createEl('p', {
+            text: 'Select a CSV file from your vault to import keywords. This will ADD to your existing keywords.'
+        });
+
+        // Get all CSV files in vault
+        const csvFiles = this.app.vault.getFiles().filter(f => f.extension === 'csv');
+
+        if (csvFiles.length === 0) {
+            contentEl.createEl('p', {
+                text: 'No CSV files found in vault. Download a template first or export existing keywords.',
+                cls: 'mod-warning'
+            });
+
+            const closeBtn = contentEl.createEl('button', {text: 'Close'});
+            closeBtn.addEventListener('click', () => this.close());
+            return;
+        }
+
+        const dropdown = contentEl.createEl('select');
+        dropdown.style.width = '100%';
+        dropdown.style.marginBottom = '10px';
+
+        for (let file of csvFiles) {
+            const option = dropdown.createEl('option', {
+                text: file.path,
+                value: file.path
+            });
+        }
+
+        const buttonDiv = contentEl.createDiv();
+        buttonDiv.style.display = 'flex';
+        buttonDiv.style.gap = '10px';
+        buttonDiv.style.marginTop = '20px';
+
+        const importBtn = buttonDiv.createEl('button', {text: 'Import', cls: 'mod-cta'});
+        importBtn.addEventListener('click', async () => {
+            const selectedPath = dropdown.value;
+            const file = this.app.vault.getAbstractFileByPath(selectedPath);
+
+            if (file) {
+                try {
+                    const content = await this.app.vault.read(file);
+                    const lines = content.split('\n').filter(line => line.trim());
+
+                    if (lines.length === 0) {
+                        new Notice('CSV file is empty');
+                        return;
+                    }
+
+                    // Parse header
+                    const headers = this.plugin.parseCSVLine(lines[0]);
+                    const headerMap = {};
+                    headers.forEach((header, index) => {
+                        headerMap[header.toLowerCase()] = index;
+                    });
+
+                    // Validate required headers
+                    if (headerMap['keyword'] === undefined || headerMap['target'] === undefined) {
+                        new Notice('CSV must have "keyword" and "target" columns');
+                        return;
+                    }
+
+                    let addedCount = 0;
+                    let mergedCount = 0;
+                    let errorCount = 0;
+                    const errors = [];
+
+                    // Parse data rows
+                    for (let i = 1; i < lines.length; i++) {
+                        const lineNum = i + 1;
+                        try {
+                            const fields = this.plugin.parseCSVLine(lines[i]);
+
+                            // Skip empty rows
+                            if (fields.length === 0 || !fields[headerMap['keyword']]) {
+                                continue;
+                            }
+
+                            const keyword = fields[headerMap['keyword']] || '';
+                            const target = fields[headerMap['target']] || '';
+
+                            if (!keyword.trim() || !target.trim()) {
+                                errors.push(`Line ${lineNum}: Missing keyword or target`);
+                                errorCount++;
+                                continue;
+                            }
+
+                            // Parse variations (pipe-separated)
+                            const variationsStr = fields[headerMap['variations']] || '';
+                            const variations = variationsStr
+                                ? variationsStr.split('|').map(v => v.trim()).filter(v => v)
+                                : [];
+
+                            // Parse boolean fields
+                            const parseBool = (value) => {
+                                if (typeof value === 'boolean') return value;
+                                const str = String(value).toLowerCase().trim();
+                                return str === 'true' || str === 'yes' || str === '1';
+                            };
+
+                            // Build keyword object
+                            const keywordObj = {
+                                keyword: keyword.trim(),
+                                target: target.trim(),
+                                variations: variations,
+                                enableTags: parseBool(fields[headerMap['enabletags']] || false),
+                                linkScope: fields[headerMap['linkscope']] || 'vault-wide',
+                                scopeFolder: fields[headerMap['scopefolder']] || '',
+                                useRelativeLinks: parseBool(fields[headerMap['userelativelinks']] || false),
+                                blockRef: fields[headerMap['blockref']] || '',
+                                requireTag: fields[headerMap['requiretag']] || '',
+                                onlyInNotesLinkingTo: parseBool(fields[headerMap['onlyinnoteslinkingto']] || false),
+                                suggestMode: parseBool(fields[headerMap['suggestmode']] || false)
+                            };
+
+                            // Check if keyword already exists
+                            const existingIndex = this.plugin.settings.keywords.findIndex(
+                                k => k.keyword.toLowerCase() === keywordObj.keyword.toLowerCase()
+                            );
+
+                            if (existingIndex !== -1) {
+                                // Merge variations into existing keyword
+                                const existing = this.plugin.settings.keywords[existingIndex];
+                                const existingVars = new Set(existing.variations.map(v => v.toLowerCase()));
+
+                                let addedVars = false;
+                                for (let variation of keywordObj.variations) {
+                                    if (!existingVars.has(variation.toLowerCase())) {
+                                        existing.variations.push(variation);
+                                        addedVars = true;
+                                    }
+                                }
+
+                                if (addedVars) {
+                                    mergedCount++;
+                                }
+                            } else {
+                                // Add new keyword
+                                this.plugin.settings.keywords.push(keywordObj);
+                                addedCount++;
+                            }
+
+                        } catch (rowError) {
+                            errors.push(`Line ${lineNum}: ${rowError.message}`);
+                            errorCount++;
+                        }
+                    }
+
+                    // Save settings
+                    await this.plugin.saveSettings();
+
+                    // Build result message
+                    let message = '';
+                    if (addedCount > 0 && mergedCount > 0) {
+                        message = `Imported: ${addedCount} new keyword(s), merged variations into ${mergedCount} existing keyword(s)`;
+                    } else if (addedCount > 0) {
+                        message = `Imported ${addedCount} new keyword(s)`;
+                    } else if (mergedCount > 0) {
+                        message = `Merged variations into ${mergedCount} existing keyword(s)`;
+                    } else {
+                        message = `No new keywords or variations to import`;
+                    }
+
+                    if (errorCount > 0) {
+                        message += `\n${errorCount} error(s) encountered`;
+                        console.error('CSV Import Errors:', errors);
+                    }
+
+                    new Notice(message);
+                    this.close();
+
+                    // Refresh settings tab if open
+                    this.app.setting.close();
+                    this.app.setting.open();
+                    this.app.setting.openTabById(this.plugin.manifest.id);
+
+                } catch (error) {
+                    new Notice(`Import failed: ${error.message}`);
+                    console.error('CSV Import Error:', error);
+                }
+            }
+        });
+
+        const closeBtn = buttonDiv.createEl('button', {text: 'Cancel'});
+        closeBtn.addEventListener('click', () => this.close());
+    }
+
+    onClose() {
+        const {contentEl} = this;
+        contentEl.empty();
+    }
+}
+
+/**
  * Modal for previewing changes to a single note
  */
 class PreviewModal extends Modal {
@@ -3022,6 +4293,203 @@ class PreviewModal extends Modal {
      * Called when the modal is closed
      * Clean up the modal content
      */
+    onClose() {
+        const {contentEl} = this;
+        contentEl.empty();
+    }
+}
+
+/**
+ * Modal for reviewing and accepting link suggestions
+ */
+class SuggestionReviewModal extends Modal {
+    constructor(app, editor, suggestions) {
+        super(app);
+        this.editor = editor;
+        this.suggestions = suggestions; // Array of {line, matchText, targetNote, blockRef, useRelative, fullMatch}
+        this.selectedSuggestions = new Set(suggestions.map((_, i) => i)); // All selected by default
+    }
+
+    onOpen() {
+        const {contentEl} = this;
+        contentEl.empty();
+        contentEl.addClass('akl-suggestion-review-modal');
+
+        // Title
+        contentEl.createEl('h2', {text: 'Review Link Suggestions'});
+
+        // Description
+        const desc = contentEl.createEl('p', {
+            text: `Found ${this.suggestions.length} link suggestion${this.suggestions.length > 1 ? 's' : ''} in this note. Select which ones to accept:`
+        });
+        desc.style.marginBottom = '1em';
+        desc.style.color = 'var(--text-muted)';
+
+        // Select all / Deselect all buttons
+        const buttonContainer = contentEl.createDiv({cls: 'akl-button-container'});
+        buttonContainer.style.marginBottom = '1em';
+        buttonContainer.style.display = 'flex';
+        buttonContainer.style.gap = '0.5em';
+
+        const selectAllBtn = buttonContainer.createEl('button', {text: 'Select All'});
+        selectAllBtn.addEventListener('click', () => {
+            this.suggestions.forEach((_, i) => {
+                this.selectedSuggestions.add(i);
+                const checkbox = contentEl.querySelector(`input[data-index="${i}"]`);
+                if (checkbox) checkbox.checked = true;
+            });
+        });
+
+        const deselectAllBtn = buttonContainer.createEl('button', {text: 'Deselect All'});
+        deselectAllBtn.addEventListener('click', () => {
+            this.selectedSuggestions.clear();
+            contentEl.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+        });
+
+        // Suggestions list
+        const listContainer = contentEl.createDiv({cls: 'akl-suggestions-list'});
+        listContainer.style.maxHeight = '400px';
+        listContainer.style.overflowY = 'auto';
+        listContainer.style.marginBottom = '1em';
+        listContainer.style.border = '1px solid var(--background-modifier-border)';
+        listContainer.style.borderRadius = '6px';
+        listContainer.style.padding = '0.5em';
+
+        this.suggestions.forEach((suggestion, index) => {
+            const item = listContainer.createDiv({cls: 'akl-suggestion-item'});
+            item.style.padding = '0.75em';
+            item.style.marginBottom = '0.5em';
+            item.style.background = 'var(--background-secondary)';
+            item.style.borderRadius = '6px';
+            item.style.display = 'flex';
+            item.style.alignItems = 'center';
+            item.style.gap = '0.75em';
+
+            // Checkbox
+            const checkbox = item.createEl('input', {type: 'checkbox'});
+            checkbox.checked = true;
+            checkbox.setAttribute('data-index', index.toString());
+            checkbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    this.selectedSuggestions.add(index);
+                } else {
+                    this.selectedSuggestions.delete(index);
+                }
+            });
+
+            // Content
+            const content = item.createDiv({cls: 'akl-suggestion-content'});
+            content.style.flex = '1';
+
+            // Keyword and target
+            const keywordLine = content.createDiv();
+            keywordLine.style.marginBottom = '0.25em';
+            keywordLine.createSpan({text: suggestion.matchText, cls: 'akl-keyword-highlight'});
+            keywordLine.createSpan({text: ' → ', cls: 'akl-arrow'});
+            keywordLine.createSpan({text: suggestion.targetNote, cls: 'akl-target-highlight'});
+
+            // Line number and context
+            const contextLine = content.createDiv();
+            contextLine.style.fontSize = '0.9em';
+            contextLine.style.color = 'var(--text-muted)';
+            contextLine.createSpan({text: `Line ${suggestion.lineNumber + 1}`});
+
+            // Style the highlighted keyword
+            const highlights = keywordLine.querySelectorAll('.akl-keyword-highlight');
+            highlights.forEach(h => {
+                h.style.background = 'rgba(255, 170, 0, 0.25)';
+                h.style.padding = '2px 4px';
+                h.style.borderRadius = '3px';
+                h.style.fontWeight = '500';
+            });
+
+            const targets = keywordLine.querySelectorAll('.akl-target-highlight');
+            targets.forEach(t => {
+                t.style.color = 'var(--text-accent)';
+                t.style.fontWeight = '500';
+            });
+        });
+
+        // Action buttons
+        const actionContainer = contentEl.createDiv({cls: 'akl-action-buttons'});
+        actionContainer.style.display = 'flex';
+        actionContainer.style.gap = '0.5em';
+        actionContainer.style.justifyContent = 'flex-end';
+
+        const cancelBtn = actionContainer.createEl('button', {text: 'Cancel'});
+        cancelBtn.addEventListener('click', () => this.close());
+
+        const acceptBtn = actionContainer.createEl('button', {text: `Accept Selected (${this.selectedSuggestions.size})`, cls: 'mod-cta'});
+        acceptBtn.addEventListener('click', () => {
+            this.acceptSelected();
+        });
+
+        // Update button text when selections change
+        const updateButtonText = () => {
+            acceptBtn.textContent = `Accept Selected (${this.selectedSuggestions.size})`;
+        };
+
+        contentEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener('change', updateButtonText);
+        });
+    }
+
+    acceptSelected() {
+        if (this.selectedSuggestions.size === 0) {
+            new Notice('No suggestions selected');
+            return;
+        }
+
+        // Sort by line number in reverse order (bottom to top)
+        // This way we don't mess up line numbers as we modify the document
+        const selectedIndices = Array.from(this.selectedSuggestions).sort((a, b) => {
+            return this.suggestions[b].lineNumber - this.suggestions[a].lineNumber;
+        });
+
+        let acceptedCount = 0;
+
+        selectedIndices.forEach(index => {
+            const suggestion = this.suggestions[index];
+            const line = this.editor.getLine(suggestion.lineNumber);
+
+            // Check if suggestion still exists on this line
+            if (!line.includes(suggestion.fullMatch)) return;
+
+            // Create the link
+            let link;
+            const targetWithBlock = suggestion.blockRef ? `${suggestion.targetNote}#${suggestion.blockRef}` : suggestion.targetNote;
+
+            if (suggestion.useRelative) {
+                const encodedTarget = encodeURIComponent(suggestion.targetNote) + '.md';
+                const blockPart = suggestion.blockRef ? `#${suggestion.blockRef}` : '';
+                link = `[${suggestion.matchText}](${encodedTarget}${blockPart})`;
+            } else {
+                link = suggestion.targetNote === suggestion.matchText && !suggestion.blockRef
+                    ? `[[${suggestion.matchText}]]`
+                    : `[[${targetWithBlock}|${suggestion.matchText}]]`;
+            }
+
+            // Replace the span with the link
+            const newLine = line.replace(suggestion.fullMatch, link);
+            this.editor.setLine(suggestion.lineNumber, newLine);
+            acceptedCount++;
+        });
+
+        new Notice(`Accepted ${acceptedCount} link suggestion${acceptedCount > 1 ? 's' : ''}`);
+        this.close();
+
+        // Update status bar
+        setTimeout(() => {
+            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (view && view.editor) {
+                const plugin = this.app.plugins.plugins['auto-keyword-linker'];
+                if (plugin && plugin.updateStatusBar) {
+                    plugin.updateStatusBar();
+                }
+            }
+        }, 100);
+    }
+
     onClose() {
         const {contentEl} = this;
         contentEl.empty();
@@ -3193,6 +4661,8 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 scopeFolder: '',
                 useRelativeLinks: false,
                 blockRef: '',
+                requireTag: '',
+                onlyInNotesLinkingTo: false,
                 collapsed: false
             });
             // Re-render the display to show new entry
@@ -3237,16 +4707,41 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 }));
 
         // New note folder setting
+        const folders = this.getAllFolders();
+        const allFolders = ['', ...folders];
+
         new Setting(containerEl)
             .setName('New note folder')
-            .setDesc('Folder where new notes will be created (leave empty for root)')
-            .addText(text => text
-                .setPlaceholder('My Notes')
-                .setValue(this.plugin.settings.newNoteFolder)
-                .onChange(async (value) => {
-                    this.plugin.settings.newNoteFolder = value;
-                    await this.plugin.saveSettings();
-                }));
+            .setDesc('Click to search and select folder where new notes will be created')
+            .addText(text => {
+                // Display current folder or root
+                const displayValue = this.plugin.settings.newNoteFolder || '/ (Root)';
+                text.setValue(displayValue)
+                    .setPlaceholder('Click to select folder...');
+
+                // Make it read-only (user can't type directly)
+                text.inputEl.readOnly = true;
+                text.inputEl.style.cursor = 'pointer';
+
+                // Open fuzzy search modal on click
+                text.inputEl.addEventListener('click', () => {
+                    const modal = new FolderSuggestModal(
+                        this.app,
+                        allFolders,
+                        this.plugin.settings.newNoteFolder || '',
+                        async (selectedFolder) => {
+                            // Update setting
+                            this.plugin.settings.newNoteFolder = selectedFolder;
+                            await this.plugin.saveSettings();
+
+                            // Update display
+                            const newDisplayValue = selectedFolder || '/ (Root)';
+                            text.setValue(newDisplayValue);
+                        }
+                    );
+                    modal.open();
+                });
+            });
 
         // New note template setting
         new Setting(containerEl)
@@ -3270,6 +4765,46 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     this.plugin.settings.autoLinkOnSave = value;
                     await this.plugin.saveSettings();
                     new Notice('Please reload the plugin for this change to take effect');
+                }));
+
+        // Keyword Suggestion Settings section
+        const suggestionHeader = containerEl.createDiv({cls: 'akl-section-header'});
+        suggestionHeader.createEl('h3', {text: 'Keyword Suggestion Settings'});
+        suggestionHeader.createEl('p', {
+            text: 'Configure how the keyword suggestion feature works.',
+            cls: 'akl-section-desc'
+        });
+
+        // Custom stop words setting
+        new Setting(containerEl)
+            .setName('Custom stop words')
+            .setDesc('Additional words to exclude from keyword suggestions (comma-separated). These are added to the default stop word list.')
+            .addTextArea(text => {
+                text.setPlaceholder('example, test, demo, sample')
+                    .setValue((this.plugin.settings.customStopWords || []).join(', '))
+                    .onChange(async (value) => {
+                        // Parse comma-separated values and trim whitespace
+                        const words = value.split(',')
+                            .map(w => w.trim())
+                            .filter(w => w.length > 0);
+                        this.plugin.settings.customStopWords = words;
+                        await this.plugin.saveSettings();
+                    });
+                text.inputEl.rows = 4;
+                text.inputEl.cols = 50;
+            });
+
+        // Button to reset custom stop words
+        new Setting(containerEl)
+            .setName('Reset custom stop words')
+            .setDesc('Clear all custom stop words')
+            .addButton(button => button
+                .setButtonText('Reset')
+                .onClick(async () => {
+                    this.plugin.settings.customStopWords = [];
+                    await this.plugin.saveSettings();
+                    new Notice('Custom stop words cleared');
+                    this.display(); // Refresh the display
                 }));
     }
 
@@ -3358,6 +4893,9 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             if (item.useRelativeLinks) {
                 cardBadges.createSpan({text: 'MD Links', cls: 'akl-badge akl-badge-md-links'});
             }
+            if (item.suggestMode) {
+                cardBadges.createSpan({text: 'Suggest', cls: 'akl-badge akl-badge-suggest'});
+            }
 
             // Get auto-discovered aliases for counting (will be reused later)
             const autoAliasesForItem = this.plugin.getAliasesForNote(item.target);
@@ -3407,57 +4945,59 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     });
                 });
 
-            // Target note input field with autocomplete
-            const targetSetting = new Setting(cardBody)
+            // Target note input field with fuzzy search modal
+            new Setting(cardBody)
                 .setName('Target note')
-                .setDesc('The note name to create links to (select existing or type new)');
+                .setDesc('Click to search and select the note to create links to')
+                .addText(text => {
+                    // Get all markdown files for the fuzzy search
+                    const files = this.app.vault.getMarkdownFiles();
+                    const noteNames = new Set(); // Use Set to avoid duplicates
 
-            // Create container for custom input with datalist
-            const targetContainer = targetSetting.controlEl.createDiv({cls: 'akl-target-container'});
+                    for (let file of files) {
+                        // Add basename (note name without extension)
+                        noteNames.add(file.basename);
 
-            // Create the input element
-            const targetInput = targetContainer.createEl('input', {
-                type: 'text',
-                value: item.target,
-                placeholder: 'Select or type note name...',
-                cls: 'akl-input'
-            });
+                        // If note is in a subfolder, also add the full path without extension
+                        if (file.path.includes('/')) {
+                            const pathWithoutExt = file.path.endsWith('.md') ? file.path.slice(0, -3) : file.path;
+                            noteNames.add(pathWithoutExt);
+                        }
+                    }
 
-            // Create unique datalist ID for this input
-            const datalistId = `akl-notes-datalist-${i}`;
-            targetInput.setAttribute('list', datalistId);
+                    // Sort alphabetically
+                    const allNotes = Array.from(noteNames).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
-            // Create datalist with all note names
-            const datalist = targetContainer.createEl('datalist');
-            datalist.id = datalistId;
+                    // Display current target
+                    const displayValue = item.target || 'Click to select...';
+                    text.setValue(displayValue)
+                        .setPlaceholder('Click to select note...');
 
-            // Get all markdown files and populate datalist
-            const files = this.app.vault.getMarkdownFiles();
-            const noteNames = new Set(); // Use Set to avoid duplicates
+                    // Make it read-only (user can't type directly)
+                    text.inputEl.readOnly = true;
+                    text.inputEl.style.cursor = 'pointer';
 
-            for (let file of files) {
-                // Add basename (note name without extension)
-                noteNames.add(file.basename);
+                    // Open fuzzy search modal on click
+                    text.inputEl.addEventListener('click', () => {
+                        const modal = new NoteSuggestModal(
+                            this.app,
+                            allNotes,
+                            item.target || '',
+                            async (selectedNote) => {
+                                // Update setting
+                                this.plugin.settings.keywords[i].target = selectedNote;
+                                await this.plugin.saveSettings();
 
-                // If note is in a subfolder, also add the full path without extension
-                if (file.path.includes('/')) {
-                    const pathWithoutExt = file.path.endsWith('.md') ? file.path.slice(0, -3) : file.path;
-                    noteNames.add(pathWithoutExt);
-                }
-            }
+                                // Update display
+                                text.setValue(selectedNote);
 
-            // Sort alphabetically and add to datalist
-            Array.from(noteNames).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())).forEach(name => {
-                datalist.createEl('option', {value: name});
-            });
-
-            // Handle input changes
-            targetInput.addEventListener('input', async (e) => {
-                this.plugin.settings.keywords[i].target = e.target.value;
-                await this.plugin.saveSettings();
-                // Update card header title without full re-render
-                this.updateCardHeader(cardTitle, this.plugin.settings.keywords[i].keyword, e.target.value);
-            });
+                                // Update card header title without full re-render
+                                this.updateCardHeader(cardTitle, this.plugin.settings.keywords[i].keyword, selectedNote);
+                            }
+                        );
+                        modal.open();
+                    });
+                });
 
             // Block reference input field
             new Setting(cardBody)
@@ -3495,6 +5035,40 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     text.inputEl.setAttribute('autocomplete', 'off');
                     text.inputEl.setAttribute('data-no-suggest', 'true');
                 });
+
+            // Require tag input field
+            new Setting(cardBody)
+                .setName('Require tag')
+                .setDesc('Optional: Only link to target note if it has this tag (e.g., #reviewed or reviewed)')
+                .addText(text => {
+                    text.setValue(item.requireTag || '')
+                        .setPlaceholder('#tag or tag')
+                        .onChange(async (value) => {
+                            // Normalize: ensure consistent format (remove # if present, we'll add it back for checking)
+                            let normalized = value.trim();
+
+                            // Remove leading # if present for storage (we'll handle both formats when checking)
+                            if (normalized.startsWith('#')) {
+                                normalized = normalized.substring(1);
+                            }
+
+                            this.plugin.settings.keywords[i].requireTag = normalized;
+                            await this.plugin.saveSettings();
+                        });
+
+                    text.inputEl.setAttribute('autocomplete', 'off');
+                });
+
+            // Only link in notes already linking to target toggle
+            new Setting(cardBody)
+                .setName('Only link in notes already linking to target')
+                .setDesc('Only create keyword links in notes that already have at least one link to the target note')
+                .addToggle(toggle => toggle
+                    .setValue(item.onlyInNotesLinkingTo || false)
+                    .onChange(async (value) => {
+                        this.plugin.settings.keywords[i].onlyInNotesLinkingTo = value;
+                        await this.plugin.saveSettings();
+                    }));
 
             // Variations with chip-style interface
             const variationsContainer = cardBody.createDiv({cls: 'akl-variations-section'});
@@ -3541,18 +5115,58 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             });
 
             variationInput.addEventListener('keydown', async (e) => {
-                if (e.key === 'Enter' && variationInput.value.trim()) {
+                if (e.key === 'Enter') {
                     e.preventDefault();
                     const newVariation = variationInput.value.trim();
+
+                    if (!newVariation) {
+                        return; // Empty input, do nothing
+                    }
+
                     if (!item.variations) {
                         item.variations = [];
                     }
-                    if (!item.variations.includes(newVariation)) {
-                        item.variations.push(newVariation);
-                        await this.plugin.saveSettings();
-                        this.display();
+
+                    // Check for duplicates (case-insensitive)
+                    const isDuplicate = item.variations.some(v => v.toLowerCase() === newVariation.toLowerCase());
+
+                    if (isDuplicate) {
+                        new Notice('Variation already exists');
+                        variationInput.value = '';
+                        return;
                     }
+
+                    // Clear input immediately (before async operations)
                     variationInput.value = '';
+
+                    // Add variation and save
+                    item.variations.push(newVariation);
+                    await this.plugin.saveSettings();
+
+                    // Clear chips container before re-rendering
+                    chipsContainer.empty();
+
+                    // Re-render all chips (manual variations + auto aliases)
+                    const hasManualVariations = item.variations && item.variations.length > 0;
+                    const hasAutoAliases = autoAliasesForItem && autoAliasesForItem.length > 0;
+
+                    if (!hasManualVariations && !hasAutoAliases) {
+                        chipsContainer.createSpan({
+                            text: 'No variations added yet',
+                            cls: 'akl-no-variations'
+                        });
+                    } else {
+                        // Render manual variations
+                        this.renderVariationChips(chipsContainer, item.variations || [], i);
+
+                        // Render auto-discovered aliases (with different style)
+                        if (hasAutoAliases) {
+                            this.renderAliasChips(chipsContainer, autoAliasesForItem);
+                        }
+                    }
+
+                    // Restore focus to input
+                    variationInput.focus();
                 }
             });
 
@@ -3579,6 +5193,18 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     }));
 
+            // Suggest mode toggle
+            new Setting(cardBody)
+                .setName('Suggest instead of auto-link')
+                .setDesc('Highlight keywords as suggestions instead of automatically creating links. Right-click to accept.')
+                .addToggle(toggle => toggle
+                    .setValue(item.suggestMode || false)
+                    .onChange(async (value) => {
+                        this.plugin.settings.keywords[i].suggestMode = value;
+                        await this.plugin.saveSettings();
+                        this.display(); // Re-render to update badge
+                    }));
+
             // Link Scope dropdown
             new Setting(cardBody)
                 .setName('Link scope')
@@ -3595,28 +5221,45 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                         this.display(); // Re-render to show/hide folder input
                     }));
 
-            // Folder dropdown (only shown for source-folder or target-folder scopes)
+            // Folder selector (only shown for source-folder or target-folder scopes)
             if (item.linkScope === 'source-folder' || item.linkScope === 'target-folder') {
                 // Get all unique folders in the vault
                 const folders = this.getAllFolders();
 
+                // Add empty string for root option
+                const allFolders = ['', ...folders];
+
                 new Setting(cardBody)
                     .setName('Folder')
-                    .setDesc('Select the folder to filter by')
-                    .addDropdown(dropdown => {
-                        // Add empty option for root/none
-                        dropdown.addOption('', '/ (Root)');
+                    .setDesc('Click to search and select a folder')
+                    .addText(text => {
+                        // Display current folder or root
+                        const displayValue = item.scopeFolder || '/ (Root)';
+                        text.setValue(displayValue)
+                            .setPlaceholder('Click to select folder...');
 
-                        // Add all folders
-                        folders.forEach(folder => {
-                            dropdown.addOption(folder, folder);
+                        // Make it read-only (user can't type directly)
+                        text.inputEl.readOnly = true;
+                        text.inputEl.style.cursor = 'pointer';
+
+                        // Open fuzzy search modal on click
+                        text.inputEl.addEventListener('click', () => {
+                            const modal = new FolderSuggestModal(
+                                this.app,
+                                allFolders,
+                                item.scopeFolder || '',
+                                async (selectedFolder) => {
+                                    // Update setting
+                                    this.plugin.settings.keywords[i].scopeFolder = selectedFolder;
+                                    await this.plugin.saveSettings();
+
+                                    // Update display
+                                    const newDisplayValue = selectedFolder || '/ (Root)';
+                                    text.setValue(newDisplayValue);
+                                }
+                            );
+                            modal.open();
                         });
-
-                        dropdown.setValue(item.scopeFolder || '')
-                            .onChange(async (value) => {
-                                this.plugin.settings.keywords[i].scopeFolder = value;
-                                await this.plugin.saveSettings();
-                            });
                     });
             }
 
@@ -3897,9 +5540,27 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 color: white;
             }
 
+            .akl-badge-suggest {
+                background: #ffaa00;
+                color: white;
+            }
+
             .akl-badge-variations {
                 background: var(--background-modifier-border);
                 color: var(--text-muted);
+            }
+
+            /* Suggested Link Styles */
+            .akl-suggested-link {
+                background-color: rgba(255, 170, 0, 0.15);
+                border-bottom: 2px dotted #ffaa00;
+                cursor: pointer;
+                position: relative;
+                transition: background-color 0.2s ease;
+            }
+
+            .akl-suggested-link:hover {
+                background-color: rgba(255, 170, 0, 0.25);
             }
 
             /* Card Body */
@@ -4336,5 +5997,52 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         `;
 
         document.head.appendChild(styleEl);
+    }
+}
+/**
+ * Folder Suggest Modal - Searchable folder picker with fuzzy matching
+ */
+class FolderSuggestModal extends FuzzySuggestModal {
+    constructor(app, folders, currentValue, onChoose) {
+        super(app);
+        this.folders = folders;
+        this.currentValue = currentValue;
+        this.onChooseCallback = onChoose;
+    }
+
+    getItems() {
+        return this.folders;
+    }
+
+    getItemText(folder) {
+        return folder || '/ (Root)';
+    }
+
+    onChooseItem(folder, evt) {
+        this.onChooseCallback(folder);
+    }
+}
+
+/**
+ * Note Suggest Modal - Searchable note picker with fuzzy matching
+ */
+class NoteSuggestModal extends FuzzySuggestModal {
+    constructor(app, notes, currentValue, onChoose) {
+        super(app);
+        this.notes = notes;
+        this.currentValue = currentValue;
+        this.onChooseCallback = onChoose;
+    }
+
+    getItems() {
+        return this.notes;
+    }
+
+    getItemText(note) {
+        return note;
+    }
+
+    onChooseItem(note, evt) {
+        this.onChooseCallback(note);
     }
 }
