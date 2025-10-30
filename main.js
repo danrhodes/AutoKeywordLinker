@@ -20,10 +20,13 @@ const DEFAULT_STOP_WORDS = [
 
 // Default settings that will be used when the plugin is first installed
 const DEFAULT_SETTINGS = {
+    // Array of keyword group objects for organizing keywords
+    keywordGroups: [],
+
     // Array of keyword objects, each containing the keyword, target note, and variations
     keywords: [
-        { keyword: 'Keyword1', target: 'Keyword1', variations: [], enableTags: false, linkScope: 'vault-wide', scopeFolder: '', useRelativeLinks: false, blockRef: '', requireTag: '', onlyInNotesLinkingTo: false, suggestMode: false },
-        { keyword: 'Keyword2', target: 'Keyword2', variations: [], enableTags: false, linkScope: 'vault-wide', scopeFolder: '', useRelativeLinks: false, blockRef: '', requireTag: '', onlyInNotesLinkingTo: false, suggestMode: false }
+        { id: 'kw-1', keyword: 'Keyword1', target: 'Keyword1', variations: [], enableTags: false, linkScope: 'vault-wide', scopeFolder: '', useRelativeLinks: false, blockRef: '', requireTag: '', onlyInNotesLinkingTo: false, suggestMode: false, preventSelfLink: false, groupId: null },
+        { id: 'kw-2', keyword: 'Keyword2', target: 'Keyword2', variations: [], enableTags: false, linkScope: 'vault-wide', scopeFolder: '', useRelativeLinks: false, blockRef: '', requireTag: '', onlyInNotesLinkingTo: false, suggestMode: false, preventSelfLink: false, groupId: null }
     ],
     autoLinkOnSave: false,          // Whether to automatically link keywords when saving a note
     caseSensitive: false,            // Whether keyword matching should be case-sensitive
@@ -32,6 +35,7 @@ const DEFAULT_SETTINGS = {
     newNoteFolder: '',               // Folder where new notes will be created (empty = root)
     newNoteTemplate: '# {{keyword}}\n\nCreated: {{date}}\n\n',  // Template for new notes
     customStopWords: [],             // Additional stop words to exclude from keyword suggestions (appended to defaults)
+    preventSelfLinkGlobal: false,    // Global setting: prevent linking keywords on their target notes
     statistics: {                    // Statistics tracking
         totalLinksCreated: 0,
         totalNotesProcessed: 0,
@@ -462,16 +466,31 @@ module.exports = class AutoKeywordLinker extends Plugin {
 
         if (!spanPattern.test(lineText)) return;
 
+        // Check if current line is inside a table
+        const content = editor.getValue();
+        const lineStart = editor.posToOffset({ line: lineNumber, ch: 0 });
+        const insideTable = this.isInsideTable(content, lineStart);
+
         // Create the actual link
         let link;
         const targetWithBlock = blockRef ? `${targetNote}#${blockRef}` : targetNote;
 
         if (useRelative) {
+            // Use relative markdown link format
+            // Escape pipe characters in the display text if inside a table to prevent breaking table columns
+            const escapedMatchText = insideTable ? matchText.replace(/\|/g, '\\|') : matchText;
             const encodedTarget = encodeURIComponent(targetNote) + '.md';
             const blockPart = blockRef ? `#${blockRef}` : '';
-            link = `[${matchText}](${encodedTarget}${blockPart})`;
+            link = `[${escapedMatchText}](${encodedTarget}${blockPart})`;
         } else {
-            link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
+            // Use wikilink format
+            if (insideTable) {
+                // Inside tables: Escape the pipe with single backslash \| to prevent breaking table formatting
+                link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}\\|${matchText}]]`;
+            } else {
+                // Outside table: standard wikilink format with | separator for alias
+                link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
+            }
         }
 
         // Replace in the line
@@ -535,6 +554,11 @@ module.exports = class AutoKeywordLinker extends Plugin {
             return;
         }
 
+        // Check if current line is inside a table
+        const content = editor.getValue();
+        const lineStart = editor.posToOffset({ line: cursor.line, ch: 0 });
+        const insideTable = this.isInsideTable(content, lineStart);
+
         // Process all matches - replace each span with its corresponding link
         let acceptedCount = 0;
         matches.forEach(match => {
@@ -549,11 +573,21 @@ module.exports = class AutoKeywordLinker extends Plugin {
             const targetWithBlock = blockRef ? `${targetNote}#${blockRef}` : targetNote;
 
             if (useRelative) {
+                // Use relative markdown link format
+                // Escape pipe characters in the display text if inside a table to prevent breaking table columns
+                const escapedMatchText = insideTable ? matchText.replace(/\|/g, '\\|') : matchText;
                 const encodedTarget = encodeURIComponent(targetNote) + '.md';
                 const blockPart = blockRef ? `#${blockRef}` : '';
-                link = `[${matchText}](${encodedTarget}${blockPart})`;
+                link = `[${escapedMatchText}](${encodedTarget}${blockPart})`;
             } else {
-                link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
+                // Use wikilink format
+                if (insideTable) {
+                    // Inside tables: Escape the pipe with single backslash \| to prevent breaking table formatting
+                    link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}\\|${matchText}]]`;
+                } else {
+                    // Outside table: standard wikilink format with | separator for alias
+                    link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
+                }
             }
 
             // Replace this span with the link
@@ -581,19 +615,32 @@ module.exports = class AutoKeywordLinker extends Plugin {
         // Find all suggestion spans
         const spanPattern = /<span class="akl-suggested-link" data-target="([^"]*)" data-block="([^"]*)" data-use-relative="([^"]*)"[^>]*>([^<]+)<\/span>/g;
 
-        newContent = content.replace(spanPattern, (match, targetNote, blockRef, useRelative, matchText) => {
+        newContent = content.replace(spanPattern, (match, targetNote, blockRef, useRelative, matchText, offset) => {
             count++;
+
+            // Check if this match is inside a table
+            const insideTable = this.isInsideTable(content, offset);
 
             // Create the actual link
             let link;
             const targetWithBlock = blockRef ? `${targetNote}#${blockRef}` : targetNote;
 
             if (useRelative === 'true') {
+                // Use relative markdown link format
+                // Escape pipe characters in the display text if inside a table to prevent breaking table columns
+                const escapedMatchText = insideTable ? matchText.replace(/\|/g, '\\|') : matchText;
                 const encodedTarget = encodeURIComponent(targetNote) + '.md';
                 const blockPart = blockRef ? `#${blockRef}` : '';
-                link = `[${matchText}](${encodedTarget}${blockPart})`;
+                link = `[${escapedMatchText}](${encodedTarget}${blockPart})`;
             } else {
-                link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
+                // Use wikilink format
+                if (insideTable) {
+                    // Inside tables: Escape the pipe with single backslash \| to prevent breaking table formatting
+                    link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}\\|${matchText}]]`;
+                } else {
+                    // Outside table: standard wikilink format with | separator for alias
+                    link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
+                }
             }
 
             return link;
@@ -731,10 +778,10 @@ module.exports = class AutoKeywordLinker extends Plugin {
      */
     async downloadCSVTemplate() {
         try {
-            const headers = 'keyword,target,variations,enableTags,linkScope,scopeFolder,useRelativeLinks,blockRef,requireTag,onlyInNotesLinkingTo,suggestMode';
-            const example1 = 'Python,Languages/Python,"python|py|Python3",false,vault-wide,,false,,,false';
-            const example2 = 'JavaScript,Languages/JavaScript,"js|javascript",false,vault-wide,,false,,,false';
-            const example3 = 'API,Documentation/API,"api|REST API",false,same-folder,,false,,reviewed,true';
+            const headers = 'keyword,target,variations,enableTags,linkScope,scopeFolder,useRelativeLinks,blockRef,requireTag,onlyInNotesLinkingTo,suggestMode,preventSelfLink';
+            const example1 = 'Python,Languages/Python,"python|py|Python3",false,vault-wide,,false,,,false,false';
+            const example2 = 'JavaScript,Languages/JavaScript,"js|javascript",false,vault-wide,,false,,,false,false';
+            const example3 = 'API,Documentation/API,"api|REST API",false,same-folder,,false,,reviewed,true,false';
 
             const csvContent = `${headers}\n${example1}\n${example2}\n${example3}\n`;
 
@@ -751,7 +798,7 @@ module.exports = class AutoKeywordLinker extends Plugin {
      */
     async exportKeywordsToCSV() {
         try {
-            const headers = 'keyword,target,variations,enableTags,linkScope,scopeFolder,useRelativeLinks,blockRef,requireTag,onlyInNotesLinkingTo,suggestMode';
+            const headers = 'keyword,target,variations,enableTags,linkScope,scopeFolder,useRelativeLinks,blockRef,requireTag,onlyInNotesLinkingTo,suggestMode,preventSelfLink';
             const rows = [headers];
 
             for (let item of this.settings.keywords) {
@@ -772,7 +819,8 @@ module.exports = class AutoKeywordLinker extends Plugin {
                     this.escapeCSV(item.blockRef || ''),
                     this.escapeCSV(item.requireTag || ''),
                     item.onlyInNotesLinkingTo || false,
-                    item.suggestMode || false
+                    item.suggestMode || false,
+                    item.preventSelfLink || false
                 ].join(',');
 
                 rows.push(row);
@@ -1383,6 +1431,7 @@ module.exports = class AutoKeywordLinker extends Plugin {
                 // If in preview mode, store results for the preview modal
                 if (preview) {
                     previewResults.push({
+                        file: file,  // Include the file object for later processing
                         fileName: file.basename,
                         ...results
                     });
@@ -1473,10 +1522,23 @@ module.exports = class AutoKeywordLinker extends Plugin {
             const requireTag = keywordMap[keyword].requireTag || '';
             const onlyInNotesLinkingTo = keywordMap[keyword].onlyInNotesLinkingTo || false;
             const suggestMode = keywordMap[keyword].suggestMode || false;
+            const preventSelfLink = keywordMap[keyword].preventSelfLink || false;
             const keywordIndex = keywordMap[keyword].keywordIndex;
 
             // Skip empty keywords or targets
             if (!keyword.trim() || !target || !target.trim()) continue;
+
+            // Check self-link protection - skip if we're on the target note itself
+            // Use global setting OR per-keyword setting
+            if (this.settings.preventSelfLinkGlobal || preventSelfLink) {
+                // Get file basename without extension and normalize
+                const currentFileBase = file.basename;
+                // Compare with target (which may or may not have path)
+                const targetBase = target.split('/').pop(); // Get just the filename from path
+                if (currentFileBase === targetBase) {
+                    continue; // Skip this keyword on its own target note
+                }
+            }
 
             // Check if we should only link in notes that already link to target
             if (onlyInNotesLinkingTo && !this.noteHasLinkToTarget(file, target)) {
@@ -1585,18 +1647,20 @@ module.exports = class AutoKeywordLinker extends Plugin {
                     replacement = `<span class="akl-suggested-link" data-target="${escapedTarget}" data-block="${escapedBlock}" data-use-relative="${useRelative}" data-keyword-index="${keywordIndex}">${matchText}</span>`;
                 } else if (useRelativeLinks) {
                     // Use relative markdown link format: [text](Target%20Note.md#^block-id)
+                    // Escape pipe characters in the display text if inside a table to prevent breaking table columns
+                    const escapedMatchText = insideTable ? matchText.replace(/\|/g, '\\|') : matchText;
                     const encodedTarget = encodeURIComponent(target) + '.md';
                     const blockPart = blockRef ? `#${blockRef}` : '';
-                    replacement = `[${matchText}](${encodedTarget}${blockPart})`;
-                } else if (insideTable) {
-                    // Inside table: use markdown link format to avoid pipe conflicts
-                    // Format: [displayText](Target%20Note.md#^block-id)
-                    const encodedTarget = encodeURIComponent(target) + '.md';
-                    const blockPart = blockRef ? `#${blockRef}` : '';
-                    replacement = `[${matchText}](${encodedTarget}${blockPart})`;
+                    replacement = `[${escapedMatchText}](${encodedTarget}${blockPart})`;
                 } else {
-                    // Outside table: use wikilink alias format [[target#^block-id|matchText]]
-                    replacement = target === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
+                    // Use wikilink format: [[target#^block-id|matchText]]
+                    if (insideTable) {
+                        // Inside tables: Escape the pipe with single backslash \| to prevent breaking table formatting
+                        replacement = target === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}\\|${matchText}]]`;
+                    } else {
+                        // Outside table: standard wikilink format with | separator for alias
+                        replacement = target === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
+                    }
                 }
                 
                 // Store this replacement
@@ -2342,6 +2406,49 @@ module.exports = class AutoKeywordLinker extends Plugin {
     }
 
     /**
+     * Get effective settings for a keyword by merging group settings with keyword-specific settings
+     * Keyword-specific settings override group settings
+     * @param {Object} keyword - The keyword object
+     * @returns {Object} Merged settings
+     */
+    getEffectiveKeywordSettings(keyword) {
+        // Start with defaults
+        const settings = {
+            enableTags: false,
+            linkScope: 'vault-wide',
+            scopeFolder: '',
+            useRelativeLinks: false,
+            blockRef: '',
+            requireTag: '',
+            onlyInNotesLinkingTo: false,
+            suggestMode: false,
+            preventSelfLink: false
+        };
+
+        // If keyword is in a group, apply group settings as base
+        if (keyword.groupId) {
+            const group = this.settings.keywordGroups.find(g => g.id === keyword.groupId);
+            if (group && group.settings) {
+                Object.assign(settings, group.settings);
+            }
+        }
+
+        // Override with keyword-specific settings only if explicitly set (not null/undefined)
+        // null means "inherit from group", so we skip those
+        if (keyword.enableTags !== null && keyword.enableTags !== undefined) settings.enableTags = keyword.enableTags;
+        if (keyword.linkScope !== null && keyword.linkScope !== undefined && keyword.linkScope !== 'vault-wide') settings.linkScope = keyword.linkScope;
+        if (keyword.scopeFolder !== null && keyword.scopeFolder !== undefined && keyword.scopeFolder !== '') settings.scopeFolder = keyword.scopeFolder;
+        if (keyword.useRelativeLinks !== null && keyword.useRelativeLinks !== undefined) settings.useRelativeLinks = keyword.useRelativeLinks;
+        if (keyword.blockRef !== null && keyword.blockRef !== undefined && keyword.blockRef !== '') settings.blockRef = keyword.blockRef;
+        if (keyword.requireTag !== null && keyword.requireTag !== undefined && keyword.requireTag !== '') settings.requireTag = keyword.requireTag;
+        if (keyword.onlyInNotesLinkingTo !== null && keyword.onlyInNotesLinkingTo !== undefined) settings.onlyInNotesLinkingTo = keyword.onlyInNotesLinkingTo;
+        if (keyword.suggestMode !== null && keyword.suggestMode !== undefined) settings.suggestMode = keyword.suggestMode;
+        if (keyword.preventSelfLink !== null && keyword.preventSelfLink !== undefined) settings.preventSelfLink = keyword.preventSelfLink;
+
+        return settings;
+    }
+
+    /**
      * Build a map of all keywords (including variations) to their target notes and settings
      * @returns {Object} Map where keys are keywords/variations and values are objects with target and enableTags
      */
@@ -2355,17 +2462,13 @@ module.exports = class AutoKeywordLinker extends Plugin {
                 continue;
             }
 
+            // Get effective settings (merges group settings with keyword-specific settings)
+            const effectiveSettings = this.getEffectiveKeywordSettings(item);
+
             // Add the main keyword with its settings
             map[item.keyword] = {
                 target: item.target,
-                enableTags: item.enableTags || false,
-                linkScope: item.linkScope || 'vault-wide',
-                scopeFolder: item.scopeFolder || '',
-                useRelativeLinks: item.useRelativeLinks || false,
-                blockRef: item.blockRef || '',
-                requireTag: item.requireTag || '',
-                onlyInNotesLinkingTo: item.onlyInNotesLinkingTo || false,
-                suggestMode: item.suggestMode || false,
+                ...effectiveSettings,
                 keywordIndex: this.settings.keywords.indexOf(item)
             };
 
@@ -2375,14 +2478,7 @@ module.exports = class AutoKeywordLinker extends Plugin {
                     if (variation.trim()) {
                         map[variation] = {
                             target: item.target,
-                            enableTags: item.enableTags || false,
-                            linkScope: item.linkScope || 'vault-wide',
-                            scopeFolder: item.scopeFolder || '',
-                            useRelativeLinks: item.useRelativeLinks || false,
-                            blockRef: item.blockRef || '',
-                            requireTag: item.requireTag || '',
-                            onlyInNotesLinkingTo: item.onlyInNotesLinkingTo || false,
-                            suggestMode: item.suggestMode || false,
+                            ...effectiveSettings,
                             keywordIndex: this.settings.keywords.indexOf(item)
                         };
                     }
@@ -2398,14 +2494,7 @@ module.exports = class AutoKeywordLinker extends Plugin {
                         if (!map[alias]) {
                             map[alias] = {
                                 target: item.target,
-                                enableTags: item.enableTags || false,
-                                linkScope: item.linkScope || 'vault-wide',
-                                scopeFolder: item.scopeFolder || '',
-                                useRelativeLinks: item.useRelativeLinks || false,
-                                blockRef: item.blockRef || '',
-                                requireTag: item.requireTag || '',
-                                onlyInNotesLinkingTo: item.onlyInNotesLinkingTo || false,
-                                suggestMode: item.suggestMode || false,
+                                ...effectiveSettings,
                                 keywordIndex: this.settings.keywords.indexOf(item)
                             };
                         }
@@ -2798,6 +2887,15 @@ module.exports = class AutoKeywordLinker extends Plugin {
     }
 
     /**
+     * Generate a unique ID for keywords or groups
+     * @param {string} prefix - Prefix for the ID (e.g., 'kw' for keywords, 'grp' for groups)
+     * @returns {string} Unique ID
+     */
+    generateId(prefix = 'id') {
+        return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+    }
+
+    /**
      * Load plugin settings from disk
      */
     async loadSettings() {
@@ -2814,11 +2912,30 @@ module.exports = class AutoKeywordLinker extends Plugin {
             this.settings.customStopWords = DEFAULT_SETTINGS.customStopWords;
         }
 
-        // Ensure enableTags and linkScope fields exist for all keywords
+        // Ensure keywordGroups array exists (migration for existing users)
+        if (!this.settings.keywordGroups) {
+            this.settings.keywordGroups = [];
+        }
+
+        // Ensure enableTags, linkScope, id, and groupId fields exist for all keywords
         if (this.settings.keywords) {
             for (let keyword of this.settings.keywords) {
+                // Add ID if missing (migration for existing keywords)
+                if (!keyword.id) {
+                    keyword.id = this.generateId('kw');
+                }
+                // Add groupId if missing (migration for existing keywords)
+                if (keyword.groupId === undefined) {
+                    keyword.groupId = null;
+                }
+                // Use null for boolean settings to allow group inheritance
+                // Only set to false if explicitly undefined (for migration)
                 if (keyword.enableTags === undefined) {
-                    keyword.enableTags = false;
+                    keyword.enableTags = null;
+                }
+                // Convert false to null for keywords in groups to enable inheritance
+                if (keyword.groupId && keyword.enableTags === false) {
+                    keyword.enableTags = null;
                 }
                 if (keyword.linkScope === undefined) {
                     keyword.linkScope = 'vault-wide';
@@ -2830,10 +2947,28 @@ module.exports = class AutoKeywordLinker extends Plugin {
                     keyword.requireTag = '';
                 }
                 if (keyword.onlyInNotesLinkingTo === undefined) {
-                    keyword.onlyInNotesLinkingTo = false;
+                    keyword.onlyInNotesLinkingTo = null;
+                }
+                if (keyword.groupId && keyword.onlyInNotesLinkingTo === false) {
+                    keyword.onlyInNotesLinkingTo = null;
                 }
                 if (keyword.suggestMode === undefined) {
-                    keyword.suggestMode = false;
+                    keyword.suggestMode = null;
+                }
+                if (keyword.groupId && keyword.suggestMode === false) {
+                    keyword.suggestMode = null;
+                }
+                if (keyword.preventSelfLink === undefined) {
+                    keyword.preventSelfLink = null;
+                }
+                if (keyword.groupId && keyword.preventSelfLink === false) {
+                    keyword.preventSelfLink = null;
+                }
+                if (keyword.useRelativeLinks === undefined) {
+                    keyword.useRelativeLinks = null;
+                }
+                if (keyword.groupId && keyword.useRelativeLinks === false) {
+                    keyword.useRelativeLinks = null;
                 }
             }
         }
@@ -2882,10 +3017,190 @@ module.exports = class AutoKeywordLinker extends Plugin {
                 border-radius: 12px;
             }
 
+            /* Tab Navigation */
+            .akl-tab-nav {
+                display: flex;
+                gap: 0.5em;
+                margin-bottom: 1.5em;
+                border-bottom: 2px solid var(--background-modifier-border);
+                padding-bottom: 0;
+            }
+
+            .akl-tab-button {
+                padding: 0.75em 1.25em;
+                background: transparent;
+                border: none;
+                border-bottom: 2px solid transparent;
+                color: var(--text-muted);
+                cursor: pointer;
+                font-size: 0.95em;
+                font-weight: 500;
+                transition: all 0.2s ease;
+                margin-bottom: -2px;
+            }
+
+            .akl-tab-button:hover {
+                color: var(--text-normal);
+                background: var(--background-modifier-hover);
+            }
+
+            .akl-tab-active {
+                color: var(--interactive-accent) !important;
+                border-bottom-color: var(--interactive-accent) !important;
+            }
+
+            /* Responsive: Wrap tabs on portrait phones */
+            @media (max-width: 600px) and (orientation: portrait) {
+                .akl-tab-nav {
+                    flex-wrap: wrap;
+                }
+
+                .akl-tab-button {
+                    padding: 0.6em 1em;
+                    font-size: 0.9em;
+                    flex: 0 1 auto;
+                }
+            }
+
+            .akl-tab-content {
+                animation: fadeIn 0.2s ease;
+            }
+
+            @keyframes fadeIn {
+                from { opacity: 0; }
+                to { opacity: 1; }
+            }
+
+            .akl-stats-bar {
+                color: var(--text-muted);
+                font-size: 0.9em;
+                padding: 0.75em 1em;
+                background: var(--background-secondary);
+                border-radius: 8px;
+                margin-bottom: 1.5em;
+            }
+
             /* Section Headers */
             .akl-section-header {
                 margin-top: 2em;
                 margin-bottom: 1em;
+            }
+
+            .akl-subsection-header {
+                margin-top: 1.5em;
+                margin-bottom: 0.75em;
+                font-size: 1em;
+                font-weight: 600;
+            }
+
+            /* Empty State */
+            .akl-empty-state {
+                text-align: center;
+                padding: 3em 2em;
+                color: var(--text-muted);
+            }
+
+            .akl-empty-state p:first-child {
+                font-size: 1.1em;
+                font-weight: 500;
+                margin-bottom: 0.5em;
+                color: var(--text-normal);
+            }
+
+            .akl-empty-hint {
+                font-size: 0.9em;
+            }
+
+            .akl-hint-text {
+                color: var(--text-muted);
+                font-size: 0.9em;
+                margin: 0.5em 0;
+            }
+
+            /* Group-specific styles */
+            .akl-group-card {
+                border-left: 3px solid var(--interactive-accent);
+            }
+
+            .akl-groups-container {
+                display: grid;
+                gap: 1em;
+                margin-bottom: 1em;
+            }
+
+            .akl-group-keywords-section,
+            .akl-group-settings-section {
+                margin-top: 1.5em;
+                padding-top: 1.5em;
+                border-top: 1px solid var(--background-modifier-border);
+            }
+
+            .akl-keywords-list {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.5em;
+                margin: 1em 0;
+            }
+
+            .akl-keyword-chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.5em;
+                padding: 0.4em 0.8em;
+                background: var(--background-secondary);
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 12px;
+                font-size: 0.9em;
+                transition: all 0.2s ease;
+            }
+
+            .akl-keyword-chip:hover {
+                background: var(--background-modifier-hover);
+            }
+
+            .akl-chip-remove {
+                cursor: pointer;
+                color: var(--text-muted);
+                font-size: 1.2em;
+                line-height: 1;
+                transition: color 0.2s ease;
+            }
+
+            .akl-chip-remove:hover {
+                color: var(--text-error);
+            }
+
+            .akl-button-secondary {
+                padding: 0.6em 1.2em;
+                background: var(--background-secondary);
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 6px;
+                color: var(--text-normal);
+                cursor: pointer;
+                font-size: 0.9em;
+                transition: all 0.2s ease;
+            }
+
+            .akl-button-secondary:hover {
+                background: var(--background-modifier-hover);
+                border-color: var(--interactive-accent);
+            }
+
+            .akl-delete-btn {
+                padding: 0.5em 1em;
+                background: transparent;
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 6px;
+                color: var(--text-muted);
+                cursor: pointer;
+                font-size: 0.85em;
+                transition: all 0.2s ease;
+            }
+
+            .akl-delete-btn:hover {
+                background: var(--background-modifier-error);
+                border-color: var(--text-error);
+                color: var(--text-on-accent);
             }
 
             .akl-section-header h3 {
@@ -3030,6 +3345,11 @@ module.exports = class AutoKeywordLinker extends Plugin {
 
             .akl-badge-suggest {
                 background: #ffaa00;
+                color: white;
+            }
+
+            .akl-badge-group {
+                background: var(--interactive-accent);
                 color: white;
             }
 
@@ -4152,7 +4472,8 @@ class ImportCSVModal extends Modal {
                                 blockRef: fields[headerMap['blockref']] || '',
                                 requireTag: fields[headerMap['requiretag']] || '',
                                 onlyInNotesLinkingTo: parseBool(fields[headerMap['onlyinnoteslinkingto']] || false),
-                                suggestMode: parseBool(fields[headerMap['suggestmode']] || false)
+                                suggestMode: parseBool(fields[headerMap['suggestmode']] || false),
+                                preventSelfLink: parseBool(fields[headerMap['preventselflink']] || false)
                             };
 
                             // Check if keyword already exists
@@ -4455,18 +4776,36 @@ class SuggestionReviewModal extends Modal {
             // Check if suggestion still exists on this line
             if (!line.includes(suggestion.fullMatch)) return;
 
+            // Check if current line is inside a table
+            const content = this.editor.getValue();
+            const lineStart = this.editor.posToOffset({ line: suggestion.lineNumber, ch: 0 });
+            const plugin = this.app.plugins.plugins['auto-keyword-linker'];
+            const insideTable = plugin ? plugin.isInsideTable(content, lineStart) : false;
+
             // Create the link
             let link;
             const targetWithBlock = suggestion.blockRef ? `${suggestion.targetNote}#${suggestion.blockRef}` : suggestion.targetNote;
 
             if (suggestion.useRelative) {
+                // Use relative markdown link format
+                // Escape pipe characters in the display text if inside a table to prevent breaking table columns
+                const escapedMatchText = insideTable ? suggestion.matchText.replace(/\|/g, '\\|') : suggestion.matchText;
                 const encodedTarget = encodeURIComponent(suggestion.targetNote) + '.md';
                 const blockPart = suggestion.blockRef ? `#${suggestion.blockRef}` : '';
-                link = `[${suggestion.matchText}](${encodedTarget}${blockPart})`;
+                link = `[${escapedMatchText}](${encodedTarget}${blockPart})`;
             } else {
-                link = suggestion.targetNote === suggestion.matchText && !suggestion.blockRef
-                    ? `[[${suggestion.matchText}]]`
-                    : `[[${targetWithBlock}|${suggestion.matchText}]]`;
+                // Use wikilink format
+                if (insideTable) {
+                    // Inside tables: Escape the pipe with single backslash \| to prevent breaking table formatting
+                    link = suggestion.targetNote === suggestion.matchText && !suggestion.blockRef
+                        ? `[[${suggestion.matchText}]]`
+                        : `[[${targetWithBlock}\\|${suggestion.matchText}]]`;
+                } else {
+                    // Outside table: standard wikilink format with | separator for alias
+                    link = suggestion.targetNote === suggestion.matchText && !suggestion.blockRef
+                        ? `[[${suggestion.matchText}]]`
+                        : `[[${targetWithBlock}|${suggestion.matchText}]]`;
+                }
             }
 
             // Replace the span with the link
@@ -4509,6 +4848,15 @@ class BulkPreviewModal extends Modal {
         super(app);
         this.results = results;
         this.plugin = plugin;
+        // Track which specific links are selected for processing
+        // Format: Map<noteIndex, Set<changeIndex>>
+        this.selectedLinks = new Map();
+
+        // Initialize all links as selected by default
+        this.results.forEach((result, noteIndex) => {
+            const linkIndices = new Set(result.changes.map((_, i) => i));
+            this.selectedLinks.set(noteIndex, linkIndices);
+        });
     }
 
     /**
@@ -4517,60 +4865,283 @@ class BulkPreviewModal extends Modal {
      */
     onOpen() {
         const {contentEl} = this;
-        contentEl.createEl('h2', {text: 'Preview: All Notes'});
-        
+        contentEl.createEl('h2', {text: 'Preview: Select Links to Create'});
+
         // Calculate and show total statistics
         const totalLinks = this.results.reduce((sum, r) => sum + r.linkCount, 0);
-        contentEl.createEl('p', {text: `Found ${totalLinks} keyword(s) to link in ${this.results.length} note(s):`});
-        
+        const initialSelectedCount = this.getSelectedLinksCount();
+        const statsText = `Found ${totalLinks} link(s) in ${this.results.length} note(s). ${initialSelectedCount} link(s) selected.`;
+        const statsEl = contentEl.createEl('p', {text: statsText, cls: 'bulk-preview-stats'});
+
+        // Select/Deselect all buttons
+        const selectButtonsDiv = contentEl.createDiv({cls: 'bulk-preview-select-buttons'});
+        selectButtonsDiv.style.marginBottom = '15px';
+        selectButtonsDiv.style.display = 'flex';
+        selectButtonsDiv.style.gap = '10px';
+
+        const selectAllBtn = selectButtonsDiv.createEl('button', {text: 'Select All Links'});
+        selectAllBtn.addEventListener('click', () => {
+            this.results.forEach((result, noteIndex) => {
+                const linkIndices = new Set(result.changes.map((_, i) => i));
+                this.selectedLinks.set(noteIndex, linkIndices);
+            });
+            contentEl.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+            this.updateStats(statsEl);
+        });
+
+        const deselectAllBtn = selectButtonsDiv.createEl('button', {text: 'Deselect All Links'});
+        deselectAllBtn.addEventListener('click', () => {
+            this.selectedLinks.clear();
+            contentEl.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+            this.updateStats(statsEl);
+        });
+
         // Create scrollable container for results
         const scrollDiv = contentEl.createDiv({cls: 'preview-scroll'});
         scrollDiv.style.maxHeight = '400px';
         scrollDiv.style.overflowY = 'auto';
         scrollDiv.style.marginBottom = '20px';
-        
-        // Display results for each file
-        for (let result of this.results) {
+        scrollDiv.style.border = '1px solid var(--background-modifier-border)';
+        scrollDiv.style.borderRadius = '6px';
+        scrollDiv.style.padding = '10px';
+
+        // Display results for each file with individual link checkboxes
+        this.results.forEach((result, noteIndex) => {
             const noteDiv = scrollDiv.createDiv({cls: 'preview-note'});
             noteDiv.style.marginBottom = '15px';
-            
-            // File name as heading
-            noteDiv.createEl('h3', {text: result.fileName});
-            
-            // Number of links to be created
-            noteDiv.createEl('p', {text: `${result.linkCount} link(s)`});
-            
-            // Show first 5 changes
-            const list = noteDiv.createEl('ul');
-            for (let change of result.changes.slice(0, 5)) {
-                const item = list.createEl('li');
-                item.createEl('strong', {text: change.keyword});
-                item.appendText(` → `);
-                item.createEl('code', {text: `[[${change.target}]]`});
-            }
-            
-            // If there are more than 5 changes, show count of remaining
-            if (result.changes.length > 5) {
-                noteDiv.createEl('p', {text: `... and ${result.changes.length - 5} more`});
-            }
-        }
-        
+            noteDiv.style.padding = '10px';
+            noteDiv.style.background = 'var(--background-secondary)';
+            noteDiv.style.borderRadius = '6px';
+
+            // Note header with select all checkbox
+            const noteHeader = noteDiv.createDiv();
+            noteHeader.style.display = 'flex';
+            noteHeader.style.alignItems = 'center';
+            noteHeader.style.gap = '10px';
+            noteHeader.style.marginBottom = '10px';
+
+            // Master checkbox for this note (selects/deselects all links in note)
+            const noteCheckbox = noteHeader.createEl('input', {type: 'checkbox'});
+            noteCheckbox.checked = true;
+            noteCheckbox.setAttribute('data-note-index', noteIndex.toString());
+            noteCheckbox.addEventListener('change', (e) => {
+                const checked = e.target.checked;
+                const linkSet = this.selectedLinks.get(noteIndex) || new Set();
+
+                if (checked) {
+                    // Select all links in this note
+                    result.changes.forEach((_, linkIndex) => linkSet.add(linkIndex));
+                    this.selectedLinks.set(noteIndex, linkSet);
+                    // Check all link checkboxes
+                    contentEl.querySelectorAll(`input[data-note="${noteIndex}"]`).forEach(cb => cb.checked = true);
+                } else {
+                    // Deselect all links in this note
+                    this.selectedLinks.delete(noteIndex);
+                    // Uncheck all link checkboxes
+                    contentEl.querySelectorAll(`input[data-note="${noteIndex}"]`).forEach(cb => cb.checked = false);
+                }
+                this.updateStats(statsEl);
+            });
+
+            // Note title and count
+            const noteTitleDiv = noteHeader.createDiv();
+            noteTitleDiv.style.flex = '1';
+            noteTitleDiv.createEl('strong', {text: result.fileName});
+            noteTitleDiv.createEl('span', {
+                text: ` (${result.linkCount} link${result.linkCount !== 1 ? 's' : ''})`,
+                cls: 'bulk-preview-link-count'
+            });
+
+            // Links list with individual checkboxes
+            const linksList = noteDiv.createDiv();
+            linksList.style.marginLeft = '30px';
+
+            result.changes.forEach((change, linkIndex) => {
+                const linkItem = linksList.createDiv();
+                linkItem.style.display = 'flex';
+                linkItem.style.alignItems = 'flex-start';
+                linkItem.style.gap = '8px';
+                linkItem.style.marginBottom = '8px';
+                linkItem.style.padding = '4px';
+                linkItem.style.borderRadius = '4px';
+                linkItem.style.transition = 'background 0.2s';
+
+                linkItem.addEventListener('mouseenter', () => {
+                    linkItem.style.background = 'var(--background-modifier-hover)';
+                });
+                linkItem.addEventListener('mouseleave', () => {
+                    linkItem.style.background = 'transparent';
+                });
+
+                // Individual link checkbox
+                const linkCheckbox = linkItem.createEl('input', {type: 'checkbox'});
+                linkCheckbox.checked = true;
+                linkCheckbox.setAttribute('data-note', noteIndex.toString());
+                linkCheckbox.setAttribute('data-link', linkIndex.toString());
+                linkCheckbox.style.marginTop = '2px';
+                linkCheckbox.addEventListener('change', (e) => {
+                    const linkSet = this.selectedLinks.get(noteIndex) || new Set();
+
+                    if (e.target.checked) {
+                        linkSet.add(linkIndex);
+                    } else {
+                        linkSet.delete(linkIndex);
+                    }
+
+                    if (linkSet.size === 0) {
+                        this.selectedLinks.delete(noteIndex);
+                    } else {
+                        this.selectedLinks.set(noteIndex, linkSet);
+                    }
+
+                    // Update note-level checkbox state
+                    const allChecked = result.changes.every((_, i) => {
+                        const set = this.selectedLinks.get(noteIndex);
+                        return set && set.has(i);
+                    });
+                    noteCheckbox.checked = allChecked;
+
+                    this.updateStats(statsEl);
+                });
+
+                // Link content
+                const linkContent = linkItem.createDiv();
+                linkContent.style.flex = '1';
+                linkContent.style.fontSize = '0.9em';
+
+                const linkText = linkContent.createDiv();
+                linkText.createEl('strong', {text: change.keyword});
+                linkText.appendText(' → ');
+                linkText.createEl('code', {text: `[[${change.target}]]`});
+
+                // Show line number if available
+                if (change.lineNumber !== undefined) {
+                    const lineInfo = linkContent.createDiv();
+                    lineInfo.style.fontSize = '0.85em';
+                    lineInfo.style.color = 'var(--text-muted)';
+                    lineInfo.style.marginTop = '2px';
+                    lineInfo.textContent = `Line ${change.lineNumber + 1}`;
+                }
+            });
+        });
+
         // Create button container
         const buttonDiv = contentEl.createDiv({cls: 'modal-button-container'});
         buttonDiv.style.display = 'flex';
         buttonDiv.style.gap = '10px';
-        
-        // Add "Apply Changes" button (primary action)
-        const applyBtn = buttonDiv.createEl('button', {text: 'Apply Changes', cls: 'mod-cta'});
-        applyBtn.addEventListener('click', async () => {
-            this.close();
-            // Actually perform the linking operation
-            await this.plugin.linkKeywordsInAllNotes(false);
-        });
-        
+        buttonDiv.style.justifyContent = 'flex-end';
+        buttonDiv.style.marginTop = '20px';
+
         // Add "Cancel" button
         const closeBtn = buttonDiv.createEl('button', {text: 'Cancel'});
         closeBtn.addEventListener('click', () => this.close());
+
+        // Add "Apply Selected Links" button (primary action)
+        const selectedCount = this.getSelectedLinksCount();
+        const applyBtn = buttonDiv.createEl('button', {text: `Apply Selected Links (${selectedCount})`, cls: 'mod-cta'});
+        applyBtn.addEventListener('click', async () => {
+            await this.applySelected();
+        });
+
+        // Store button reference to update text
+        this.applyBtn = applyBtn;
+    }
+
+    /**
+     * Update the statistics text
+     */
+    updateStats(statsEl) {
+        const totalLinks = this.results.reduce((sum, r) => sum + r.linkCount, 0);
+        const selectedCount = this.getSelectedLinksCount();
+        statsEl.textContent = `Found ${totalLinks} link(s) in ${this.results.length} note(s). ${selectedCount} link(s) selected.`;
+
+        // Update button text
+        if (this.applyBtn) {
+            this.applyBtn.textContent = `Apply Selected Links (${selectedCount})`;
+        }
+    }
+
+    /**
+     * Get total count of selected links across all notes
+     */
+    getSelectedLinksCount() {
+        let total = 0;
+        for (const linkSet of this.selectedLinks.values()) {
+            total += linkSet.size;
+        }
+        return total;
+    }
+
+    /**
+     * Apply only the selected links to their respective notes
+     */
+    async applySelected() {
+        if (this.selectedLinks.size === 0) {
+            new Notice('No links selected');
+            return;
+        }
+
+        this.close();
+
+        const totalSelectedLinks = this.getSelectedLinksCount();
+        new Notice(`Creating ${totalSelectedLinks} link(s)...`);
+
+        let totalLinksCreated = 0;
+        let notesProcessed = 0;
+
+        // Process each note that has selected links
+        for (const [noteIndex, linkIndices] of this.selectedLinks) {
+            if (linkIndices.size === 0) continue;
+
+            const result = this.results[noteIndex];
+            if (!result || !result.file) continue;
+
+            const file = result.file;
+
+            // Get the selected keywords/targets for this note
+            const selectedChanges = result.changes.filter((_, i) => linkIndices.has(i));
+
+            // Create a temporary keyword filter set
+            const selectedKeywords = new Set(selectedChanges.map(c => c.keyword.toLowerCase()));
+
+            // Temporarily modify the plugin's keyword map to only include selected keywords
+            const originalBuildKeywordMap = this.plugin.buildKeywordMap.bind(this.plugin);
+
+            this.plugin.buildKeywordMap = () => {
+                const fullMap = originalBuildKeywordMap();
+                const filteredMap = {};
+
+                for (const [key, value] of Object.entries(fullMap)) {
+                    if (selectedKeywords.has(key.toLowerCase())) {
+                        filteredMap[key] = value;
+                    }
+                }
+
+                return filteredMap;
+            };
+
+            try {
+                // Process the file with only the selected keywords
+                const processResult = await this.plugin.linkKeywordsInFile(file, false);
+
+                if (processResult && processResult.changed) {
+                    totalLinksCreated += processResult.linkCount;
+                    notesProcessed++;
+                }
+            } finally {
+                // Restore the original buildKeywordMap function
+                this.plugin.buildKeywordMap = originalBuildKeywordMap;
+            }
+        }
+
+        // Update statistics
+        this.plugin.settings.statistics.totalLinksCreated += totalLinksCreated;
+        this.plugin.settings.statistics.totalNotesProcessed += notesProcessed;
+        this.plugin.settings.statistics.lastRunDate = new Date().toISOString();
+        await this.plugin.saveSettings();
+
+        // Show summary
+        new Notice(`✓ Processed ${notesProcessed} note(s), created ${totalLinksCreated} link(s)`);
     }
 
     /**
@@ -4596,6 +5167,7 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         super(app, plugin);
         this.plugin = plugin;
         this.searchFilter = ''; // Track current search term
+        this.currentTab = 'keywords'; // Track which tab is active: 'keywords', 'groups', 'general', 'import-export'
     }
 
     /**
@@ -4609,11 +5181,58 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         // Add custom CSS for improved UI
         this.addCustomStyles();
 
-        // Main heading with stats
+        // Main heading
         const headerDiv = containerEl.createDiv({cls: 'akl-header'});
         headerDiv.createEl('h2', {text: 'Auto Keyword Linker Settings'});
-        const statsSpan = headerDiv.createEl('span', {
-            cls: 'akl-stats',
+
+        // Tab navigation
+        const tabNav = containerEl.createDiv({cls: 'akl-tab-nav'});
+
+        const tabs = [
+            { id: 'keywords', label: 'Keywords', icon: '🔤' },
+            { id: 'groups', label: 'Groups', icon: '📁' },
+            { id: 'general', label: 'General', icon: '⚙️' },
+            { id: 'import-export', label: 'Import/Export', icon: '📦' }
+        ];
+
+        tabs.forEach(tab => {
+            const tabBtn = tabNav.createEl('button', {
+                text: `${tab.icon} ${tab.label}`,
+                cls: `akl-tab-button ${this.currentTab === tab.id ? 'akl-tab-active' : ''}`
+            });
+            tabBtn.addEventListener('click', () => {
+                this.currentTab = tab.id;
+                this.display(); // Re-render with new tab
+            });
+        });
+
+        // Tab content container
+        const tabContent = containerEl.createDiv({cls: 'akl-tab-content'});
+
+        // Render the appropriate tab content
+        switch (this.currentTab) {
+            case 'keywords':
+                this.displayKeywordsTab(tabContent);
+                break;
+            case 'groups':
+                this.displayGroupsTab(tabContent);
+                break;
+            case 'general':
+                this.displayGeneralTab(tabContent);
+                break;
+            case 'import-export':
+                this.displayImportExportTab(tabContent);
+                break;
+        }
+    }
+
+    /**
+     * Display the Keywords tab
+     */
+    displayKeywordsTab(containerEl) {
+        // Stats
+        const statsDiv = containerEl.createDiv({cls: 'akl-stats-bar'});
+        statsDiv.createEl('span', {
             text: `${this.plugin.settings.keywords.length} keyword${this.plugin.settings.keywords.length !== 1 ? 's' : ''} configured`
         });
 
@@ -4652,26 +5271,112 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         });
         addBtn.addEventListener('click', () => {
             // Add empty keyword object to settings
+            // Use null for inheritable boolean settings so they inherit from group if assigned
             this.plugin.settings.keywords.push({
+                id: this.plugin.generateId('kw'),
                 keyword: '',
                 target: '',
                 variations: [],
-                enableTags: false,
+                enableTags: null,
                 linkScope: 'vault-wide',
                 scopeFolder: '',
-                useRelativeLinks: false,
+                useRelativeLinks: null,
                 blockRef: '',
                 requireTag: '',
-                onlyInNotesLinkingTo: false,
-                collapsed: false
+                onlyInNotesLinkingTo: null,
+                suggestMode: null,
+                preventSelfLink: null,
+                collapsed: false,
+                groupId: null
             });
             // Re-render the display to show new entry
             this.display();
         });
+    }
 
+    /**
+     * Update card header title without full re-render
+     * @param {HTMLElement} cardTitle - The card title element to update
+     * @param {string} keyword - The keyword value
+     * @param {string} target - The target value
+     */
+    updateCardHeader(cardTitle, keyword, target) {
+        cardTitle.empty();
+        const titleText = keyword || 'New Keyword';
+        const targetText = target ? ` → ${target}` : '';
+        cardTitle.createSpan({text: titleText, cls: 'akl-keyword-name'});
+        if (targetText) {
+            cardTitle.createSpan({text: targetText, cls: 'akl-target-name'});
+        }
+    }
+
+    /**
+     * Display the Groups tab
+     */
+    displayGroupsTab(containerEl) {
+        // Stats
+        const statsDiv = containerEl.createDiv({cls: 'akl-stats-bar'});
+        const totalKeywordsInGroups = this.plugin.settings.keywordGroups.reduce((sum, group) => {
+            return sum + this.plugin.settings.keywords.filter(kw => kw.groupId === group.id).length;
+        }, 0);
+        statsDiv.createEl('span', {
+            text: `${this.plugin.settings.keywordGroups.length} group${this.plugin.settings.keywordGroups.length !== 1 ? 's' : ''} • ${totalKeywordsInGroups} keyword${totalKeywordsInGroups !== 1 ? 's' : ''} in groups`
+        });
+
+        // Groups section header
+        const groupsHeader = containerEl.createDiv({cls: 'akl-section-header'});
+        groupsHeader.createEl('h3', {text: 'Keyword Groups'});
+        groupsHeader.createEl('p', {
+            text: 'Organize keywords into groups with shared settings. Keywords inherit settings from their group.',
+            cls: 'akl-section-desc'
+        });
+
+        // Container for groups list
+        const groupsDiv = containerEl.createDiv({cls: 'akl-groups-container'});
+
+        // Render all groups
+        this.renderGroups(groupsDiv);
+
+        // Add button to create new group
+        const addBtnContainer = containerEl.createDiv({cls: 'akl-add-button-container'});
+        const addBtn = addBtnContainer.createEl('button', {
+            text: '+ Create Group',
+            cls: 'mod-cta akl-add-button'
+        });
+        addBtn.addEventListener('click', () => {
+            // Add empty group object to settings
+            this.plugin.settings.keywordGroups.push({
+                id: this.plugin.generateId('grp'),
+                name: 'New Group',
+                collapsed: false,
+                settings: {
+                    enableTags: false,
+                    linkScope: 'vault-wide',
+                    scopeFolder: '',
+                    useRelativeLinks: false,
+                    blockRef: '',
+                    requireTag: '',
+                    onlyInNotesLinkingTo: false,
+                    suggestMode: false,
+                    preventSelfLink: false
+                }
+            });
+            // Re-render the display to show new entry
+            this.display();
+        });
+    }
+
+    /**
+     * Display the General tab
+     */
+    displayGeneralTab(containerEl) {
         // General settings section
         const generalHeader = containerEl.createDiv({cls: 'akl-section-header'});
-        generalHeader.createEl('h3', {text: 'General Settings'});
+        generalHeader.createEl('h3', {text: 'Linking Behavior'});
+        generalHeader.createEl('p', {
+            text: 'Configure how keywords are linked in your notes.',
+            cls: 'akl-section-desc'
+        });
 
         // First occurrence only toggle
         new Setting(containerEl)
@@ -4694,6 +5399,37 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     this.plugin.settings.caseSensitive = value;
                     await this.plugin.saveSettings();
                 }));
+
+        // Prevent self-link toggle (global)
+        new Setting(containerEl)
+            .setName('Prevent self-links (global)')
+            .setDesc('Prevent keywords from linking on their own target note (applies to all keywords unless overridden per-keyword)')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.preventSelfLinkGlobal)
+                .onChange(async (value) => {
+                    this.plugin.settings.preventSelfLinkGlobal = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        // Auto-link on save toggle
+        new Setting(containerEl)
+            .setName('Auto-link on save')
+            .setDesc('Automatically link keywords when you save a note (requires reload)')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.autoLinkOnSave)
+                .onChange(async (value) => {
+                    this.plugin.settings.autoLinkOnSave = value;
+                    await this.plugin.saveSettings();
+                    new Notice('Please reload the plugin for this change to take effect');
+                }));
+
+        // Note Creation section
+        const noteCreationHeader = containerEl.createDiv({cls: 'akl-section-header'});
+        noteCreationHeader.createEl('h3', {text: 'Note Creation'});
+        noteCreationHeader.createEl('p', {
+            text: 'Configure how new notes are created when target notes don\'t exist.',
+            cls: 'akl-section-desc'
+        });
 
         // Auto-create notes toggle
         new Setting(containerEl)
@@ -4755,18 +5491,6 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
-        // Auto-link on save toggle
-        new Setting(containerEl)
-            .setName('Auto-link on save')
-            .setDesc('Automatically link keywords when you save a note (requires reload)')
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.autoLinkOnSave)
-                .onChange(async (value) => {
-                    this.plugin.settings.autoLinkOnSave = value;
-                    await this.plugin.saveSettings();
-                    new Notice('Please reload the plugin for this change to take effect');
-                }));
-
         // Keyword Suggestion Settings section
         const suggestionHeader = containerEl.createDiv({cls: 'akl-section-header'});
         suggestionHeader.createEl('h3', {text: 'Keyword Suggestion Settings'});
@@ -4809,19 +5533,49 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
     }
 
     /**
-     * Update card header title without full re-render
-     * @param {HTMLElement} cardTitle - The card title element to update
-     * @param {string} keyword - The keyword value
-     * @param {string} target - The target value
+     * Display the Import/Export tab
      */
-    updateCardHeader(cardTitle, keyword, target) {
-        cardTitle.empty();
-        const titleText = keyword || 'New Keyword';
-        const targetText = target ? ` → ${target}` : '';
-        cardTitle.createSpan({text: titleText, cls: 'akl-keyword-name'});
-        if (targetText) {
-            cardTitle.createSpan({text: targetText, cls: 'akl-target-name'});
-        }
+    displayImportExportTab(containerEl) {
+        // Import/Export section header
+        const header = containerEl.createDiv({cls: 'akl-section-header'});
+        header.createEl('h3', {text: 'Import & Export Keywords'});
+        header.createEl('p', {
+            text: 'Export your keywords to CSV or import keywords from a CSV file.',
+            cls: 'akl-section-desc'
+        });
+
+        // Export section
+        new Setting(containerEl)
+            .setName('Export keywords to CSV')
+            .setDesc('Export all keywords and their settings to a CSV file')
+            .addButton(button => button
+                .setButtonText('Export to CSV')
+                .setCta()
+                .onClick(() => this.plugin.exportKeywordsToCSV()));
+
+        // Import section
+        new Setting(containerEl)
+            .setName('Import keywords from CSV')
+            .setDesc('Import keywords from a CSV file (opens file picker)')
+            .addButton(button => button
+                .setButtonText('Import from CSV')
+                .onClick(() => this.plugin.importKeywordsFromCSV()));
+
+        // Statistics section
+        const statsHeader = containerEl.createDiv({cls: 'akl-section-header'});
+        statsHeader.createEl('h3', {text: 'Statistics'});
+        statsHeader.createEl('p', {
+            text: 'View usage statistics for the plugin.',
+            cls: 'akl-section-desc'
+        });
+
+        // View statistics button
+        new Setting(containerEl)
+            .setName('View statistics')
+            .setDesc('See how many links have been created and which notes have been processed')
+            .addButton(button => button
+                .setButtonText('View Statistics')
+                .onClick(() => this.plugin.showStatistics()));
     }
 
     /**
@@ -4887,13 +5641,25 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
 
             // Card badges
             const cardBadges = cardHeader.createDiv({cls: 'akl-card-badges'});
-            if (item.enableTags) {
+
+            // Show group badge if keyword is in a group
+            if (item.groupId) {
+                const group = this.plugin.settings.keywordGroups.find(g => g.id === item.groupId);
+                if (group) {
+                    cardBadges.createSpan({text: `📁 ${group.name}`, cls: 'akl-badge akl-badge-group'});
+                }
+            }
+
+            // Get effective settings for badge display
+            const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
+
+            if (effectiveSettings.enableTags) {
                 cardBadges.createSpan({text: 'Tags', cls: 'akl-badge akl-badge-tags'});
             }
-            if (item.useRelativeLinks) {
+            if (effectiveSettings.useRelativeLinks) {
                 cardBadges.createSpan({text: 'MD Links', cls: 'akl-badge akl-badge-md-links'});
             }
-            if (item.suggestMode) {
+            if (effectiveSettings.suggestMode) {
                 cardBadges.createSpan({text: 'Suggest', cls: 'akl-badge akl-badge-suggest'});
             }
 
@@ -5063,12 +5829,14 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             new Setting(cardBody)
                 .setName('Only link in notes already linking to target')
                 .setDesc('Only create keyword links in notes that already have at least one link to the target note')
-                .addToggle(toggle => toggle
-                    .setValue(item.onlyInNotesLinkingTo || false)
-                    .onChange(async (value) => {
-                        this.plugin.settings.keywords[i].onlyInNotesLinkingTo = value;
-                        await this.plugin.saveSettings();
-                    }));
+                .addToggle(toggle => {
+                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
+                    toggle.setValue(effectiveSettings.onlyInNotesLinkingTo || false)
+                        .onChange(async (value) => {
+                            this.plugin.settings.keywords[i].onlyInNotesLinkingTo = value;
+                            await this.plugin.saveSettings();
+                        });
+                });
 
             // Variations with chip-style interface
             const variationsContainer = cardBody.createDiv({cls: 'akl-variations-section'});
@@ -5174,36 +5942,77 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             new Setting(cardBody)
                 .setName('Enable tags')
                 .setDesc('Automatically add tags to source and target notes')
-                .addToggle(toggle => toggle
-                    .setValue(item.enableTags || false)
-                    .onChange(async (value) => {
-                        this.plugin.settings.keywords[i].enableTags = value;
-                        await this.plugin.saveSettings();
-                        this.display();
-                    }));
+                .addToggle(toggle => {
+                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
+                    toggle.setValue(effectiveSettings.enableTags || false)
+                        .onChange(async (value) => {
+                            this.plugin.settings.keywords[i].enableTags = value;
+                            await this.plugin.saveSettings();
+                            this.display();
+                        });
+                });
 
             // Use relative markdown links toggle
             new Setting(cardBody)
                 .setName('Use relative markdown links')
                 .setDesc('Create markdown links [text](note.md) instead of wikilinks [[note]]')
-                .addToggle(toggle => toggle
-                    .setValue(item.useRelativeLinks || false)
-                    .onChange(async (value) => {
-                        this.plugin.settings.keywords[i].useRelativeLinks = value;
-                        await this.plugin.saveSettings();
-                    }));
+                .addToggle(toggle => {
+                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
+                    toggle.setValue(effectiveSettings.useRelativeLinks || false)
+                        .onChange(async (value) => {
+                            this.plugin.settings.keywords[i].useRelativeLinks = value;
+                            await this.plugin.saveSettings();
+                        });
+                });
 
             // Suggest mode toggle
             new Setting(cardBody)
                 .setName('Suggest instead of auto-link')
                 .setDesc('Highlight keywords as suggestions instead of automatically creating links. Right-click to accept.')
-                .addToggle(toggle => toggle
-                    .setValue(item.suggestMode || false)
-                    .onChange(async (value) => {
-                        this.plugin.settings.keywords[i].suggestMode = value;
-                        await this.plugin.saveSettings();
-                        this.display(); // Re-render to update badge
-                    }));
+                .addToggle(toggle => {
+                    // Show effective value (from group if null)
+                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
+                    toggle.setValue(effectiveSettings.suggestMode || false)
+                        .onChange(async (value) => {
+                            this.plugin.settings.keywords[i].suggestMode = value;
+                            await this.plugin.saveSettings();
+                            this.display(); // Re-render to update badge
+                        });
+                });
+
+            // Group assignment dropdown
+            new Setting(cardBody)
+                .setName('Keyword Group')
+                .setDesc('Assign to a group to inherit group settings. Individual settings can override group defaults.')
+                .addDropdown(dropdown => {
+                    // Add "None" option
+                    dropdown.addOption('', '(No group)');
+
+                    // Add all groups as options
+                    this.plugin.settings.keywordGroups.forEach(group => {
+                        dropdown.addOption(group.id, group.name);
+                    });
+
+                    dropdown.setValue(item.groupId || '')
+                        .onChange(async (value) => {
+                            this.plugin.settings.keywords[i].groupId = value || null;
+                            await this.plugin.saveSettings();
+                            this.display(); // Re-render to update badge
+                        });
+                });
+
+            // Prevent self-link toggle (per-keyword)
+            new Setting(cardBody)
+                .setName('Prevent self-link')
+                .setDesc('Prevent this keyword from linking on its own target note (overrides global setting)')
+                .addToggle(toggle => {
+                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
+                    toggle.setValue(effectiveSettings.preventSelfLink || false)
+                        .onChange(async (value) => {
+                            this.plugin.settings.keywords[i].preventSelfLink = value;
+                            await this.plugin.saveSettings();
+                        });
+                });
 
             // Link Scope dropdown
             new Setting(cardBody)
@@ -5288,6 +6097,203 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 text: `No keywords match "${this.searchFilter}"`,
                 cls: 'akl-no-results-hint'
             });
+        }
+    }
+
+    /**
+     * Render the list of groups with their settings
+     * @param {HTMLElement} container - Container element to render into
+     */
+    renderGroups(container) {
+        container.empty();  // Clear existing content
+
+        // If no groups exist yet, show empty state
+        if (this.plugin.settings.keywordGroups.length === 0) {
+            const emptyState = container.createDiv({cls: 'akl-empty-state'});
+            emptyState.createEl('p', {text: 'No groups yet'});
+            emptyState.createEl('p', {
+                text: 'Create a group to organize your keywords with shared settings',
+                cls: 'akl-empty-hint'
+            });
+            return;
+        }
+
+        // Iterate through all group entries
+        for (let i = 0; i < this.plugin.settings.keywordGroups.length; i++) {
+            const group = this.plugin.settings.keywordGroups[i];
+
+            // Initialize collapsed state if not set
+            if (group.collapsed === undefined) {
+                group.collapsed = false;
+            }
+
+            // Get keywords in this group
+            const keywordsInGroup = this.plugin.settings.keywords.filter(kw => kw.groupId === group.id);
+
+            // Create card container for this group entry
+            const cardDiv = container.createDiv({cls: 'akl-keyword-card akl-group-card'});
+
+            // Card header with collapse toggle
+            const cardHeader = cardDiv.createDiv({cls: 'akl-card-header'});
+
+            // Collapse toggle button
+            const collapseBtn = cardHeader.createDiv({cls: 'akl-collapse-btn'});
+            collapseBtn.innerHTML = group.collapsed ? '▶' : '▼';
+            collapseBtn.setAttribute('aria-label', group.collapsed ? 'Expand' : 'Collapse');
+            collapseBtn.addEventListener('click', async () => {
+                group.collapsed = !group.collapsed;
+                await this.plugin.saveSettings();
+                this.display();
+            });
+
+            // Card title area
+            const cardTitle = cardHeader.createDiv({cls: 'akl-card-title'});
+            cardTitle.createSpan({text: group.name, cls: 'akl-keyword-name'});
+            cardTitle.createSpan({text: ` (${keywordsInGroup.length} keywords)`, cls: 'akl-target-name'});
+
+            // Delete button
+            const deleteBtn = cardHeader.createEl('button', {
+                text: '🗑️ Delete',
+                cls: 'akl-delete-btn'
+            });
+            deleteBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                // Remove group ID from all keywords in this group
+                this.plugin.settings.keywords.forEach(kw => {
+                    if (kw.groupId === group.id) {
+                        kw.groupId = null;
+                    }
+                });
+                // Remove the group
+                this.plugin.settings.keywordGroups.splice(i, 1);
+                await this.plugin.saveSettings();
+                this.display();
+            });
+
+            // Card body (collapsible)
+            const cardBody = cardDiv.createDiv({cls: 'akl-card-body'});
+            if (group.collapsed) {
+                cardBody.style.display = 'none';
+            }
+
+            // Group name input field
+            new Setting(cardBody)
+                .setName('Group name')
+                .setDesc('Name for this group of keywords')
+                .addText(text => {
+                    text.setValue(group.name)
+                        .setPlaceholder('Enter group name...')
+                        .onChange(async (value) => {
+                            this.plugin.settings.keywordGroups[i].name = value;
+                            await this.plugin.saveSettings();
+                            // Update card header title
+                            cardTitle.empty();
+                            cardTitle.createSpan({text: value, cls: 'akl-keyword-name'});
+                            cardTitle.createSpan({text: ` (${keywordsInGroup.length} keywords)`, cls: 'akl-target-name'});
+                        });
+                    text.inputEl.addClass('akl-input');
+                });
+
+            // Keywords in group section
+            const keywordsSection = cardBody.createDiv({cls: 'akl-group-keywords-section'});
+            keywordsSection.createEl('h4', {text: 'Keywords in this group', cls: 'akl-subsection-header'});
+
+            if (keywordsInGroup.length === 0) {
+                keywordsSection.createEl('p', {
+                    text: 'No keywords in this group yet. Add keywords below or assign them from the Keywords tab.',
+                    cls: 'akl-hint-text'
+                });
+            } else {
+                const keywordsList = keywordsSection.createDiv({cls: 'akl-keywords-list'});
+                keywordsInGroup.forEach(kw => {
+                    const kwChip = keywordsList.createDiv({cls: 'akl-keyword-chip'});
+                    kwChip.createSpan({text: kw.keyword || 'Untitled'});
+                    const removeBtn = kwChip.createSpan({text: '×', cls: 'akl-chip-remove'});
+                    removeBtn.addEventListener('click', async () => {
+                        kw.groupId = null;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    });
+                });
+            }
+
+            // Add keywords button
+            const addKeywordsBtn = keywordsSection.createEl('button', {
+                text: '+ Add Keywords to Group',
+                cls: 'akl-button-secondary'
+            });
+            addKeywordsBtn.addEventListener('click', () => {
+                // Open fuzzy search modal to select keywords
+                // Fetch current keywords in group dynamically to avoid stale data
+                const currentKeywordsInGroup = this.plugin.settings.keywords.filter(kw => kw.groupId === group.id);
+                new KeywordGroupAssignModal(this.app, this.plugin, group.id, currentKeywordsInGroup).open();
+            });
+
+            // Group settings section
+            const settingsSection = cardBody.createDiv({cls: 'akl-group-settings-section'});
+            settingsSection.createEl('h4', {text: 'Group Settings', cls: 'akl-subsection-header'});
+            settingsSection.createEl('p', {
+                text: 'These settings apply to all keywords in this group (unless overridden per-keyword).',
+                cls: 'akl-hint-text'
+            });
+
+            // Link scope dropdown
+            new Setting(settingsSection)
+                .setName('Link scope')
+                .setDesc('Where this group\'s keywords should create links')
+                .addDropdown(dropdown => dropdown
+                    .addOption('vault-wide', 'Vault-wide (link in all notes)')
+                    .addOption('source-folder', 'Source folder only')
+                    .addOption('target-folder', 'Target folder only')
+                    .setValue(group.settings.linkScope || 'vault-wide')
+                    .onChange(async (value) => {
+                        group.settings.linkScope = value;
+                        await this.plugin.saveSettings();
+                    }));
+
+            // Enable tags toggle
+            new Setting(settingsSection)
+                .setName('Enable tags')
+                .setDesc('Add #tag to target notes when linking')
+                .addToggle(toggle => toggle
+                    .setValue(group.settings.enableTags || false)
+                    .onChange(async (value) => {
+                        group.settings.enableTags = value;
+                        await this.plugin.saveSettings();
+                    }));
+
+            // Suggest mode toggle
+            new Setting(settingsSection)
+                .setName('Suggest mode')
+                .setDesc('Suggest links instead of creating them automatically')
+                .addToggle(toggle => toggle
+                    .setValue(group.settings.suggestMode || false)
+                    .onChange(async (value) => {
+                        group.settings.suggestMode = value;
+                        await this.plugin.saveSettings();
+                    }));
+
+            // Use relative links toggle
+            new Setting(settingsSection)
+                .setName('Use Markdown links')
+                .setDesc('Use [text](link.md) format instead of [[wikilinks]]')
+                .addToggle(toggle => toggle
+                    .setValue(group.settings.useRelativeLinks || false)
+                    .onChange(async (value) => {
+                        group.settings.useRelativeLinks = value;
+                        await this.plugin.saveSettings();
+                    }));
+
+            // Prevent self-link toggle
+            new Setting(settingsSection)
+                .setName('Prevent self-links')
+                .setDesc('Don\'t link keywords on their own target note')
+                .addToggle(toggle => toggle
+                    .setValue(group.settings.preventSelfLink || false)
+                    .onChange(async (value) => {
+                        group.settings.preventSelfLink = value;
+                        await this.plugin.saveSettings();
+                    }));
         }
     }
 
@@ -5394,10 +6400,190 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 border-radius: 12px;
             }
 
+            /* Tab Navigation */
+            .akl-tab-nav {
+                display: flex;
+                gap: 0.5em;
+                margin-bottom: 1.5em;
+                border-bottom: 2px solid var(--background-modifier-border);
+                padding-bottom: 0;
+            }
+
+            .akl-tab-button {
+                padding: 0.75em 1.25em;
+                background: transparent;
+                border: none;
+                border-bottom: 2px solid transparent;
+                color: var(--text-muted);
+                cursor: pointer;
+                font-size: 0.95em;
+                font-weight: 500;
+                transition: all 0.2s ease;
+                margin-bottom: -2px;
+            }
+
+            .akl-tab-button:hover {
+                color: var(--text-normal);
+                background: var(--background-modifier-hover);
+            }
+
+            .akl-tab-active {
+                color: var(--interactive-accent) !important;
+                border-bottom-color: var(--interactive-accent) !important;
+            }
+
+            /* Responsive: Wrap tabs on portrait phones */
+            @media (max-width: 600px) and (orientation: portrait) {
+                .akl-tab-nav {
+                    flex-wrap: wrap;
+                }
+
+                .akl-tab-button {
+                    padding: 0.6em 1em;
+                    font-size: 0.9em;
+                    flex: 0 1 auto;
+                }
+            }
+
+            .akl-tab-content {
+                animation: fadeIn 0.2s ease;
+            }
+
+            @keyframes fadeIn {
+                from { opacity: 0; }
+                to { opacity: 1; }
+            }
+
+            .akl-stats-bar {
+                color: var(--text-muted);
+                font-size: 0.9em;
+                padding: 0.75em 1em;
+                background: var(--background-secondary);
+                border-radius: 8px;
+                margin-bottom: 1.5em;
+            }
+
             /* Section Headers */
             .akl-section-header {
                 margin-top: 2em;
                 margin-bottom: 1em;
+            }
+
+            .akl-subsection-header {
+                margin-top: 1.5em;
+                margin-bottom: 0.75em;
+                font-size: 1em;
+                font-weight: 600;
+            }
+
+            /* Empty State */
+            .akl-empty-state {
+                text-align: center;
+                padding: 3em 2em;
+                color: var(--text-muted);
+            }
+
+            .akl-empty-state p:first-child {
+                font-size: 1.1em;
+                font-weight: 500;
+                margin-bottom: 0.5em;
+                color: var(--text-normal);
+            }
+
+            .akl-empty-hint {
+                font-size: 0.9em;
+            }
+
+            .akl-hint-text {
+                color: var(--text-muted);
+                font-size: 0.9em;
+                margin: 0.5em 0;
+            }
+
+            /* Group-specific styles */
+            .akl-group-card {
+                border-left: 3px solid var(--interactive-accent);
+            }
+
+            .akl-groups-container {
+                display: grid;
+                gap: 1em;
+                margin-bottom: 1em;
+            }
+
+            .akl-group-keywords-section,
+            .akl-group-settings-section {
+                margin-top: 1.5em;
+                padding-top: 1.5em;
+                border-top: 1px solid var(--background-modifier-border);
+            }
+
+            .akl-keywords-list {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.5em;
+                margin: 1em 0;
+            }
+
+            .akl-keyword-chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.5em;
+                padding: 0.4em 0.8em;
+                background: var(--background-secondary);
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 12px;
+                font-size: 0.9em;
+                transition: all 0.2s ease;
+            }
+
+            .akl-keyword-chip:hover {
+                background: var(--background-modifier-hover);
+            }
+
+            .akl-chip-remove {
+                cursor: pointer;
+                color: var(--text-muted);
+                font-size: 1.2em;
+                line-height: 1;
+                transition: color 0.2s ease;
+            }
+
+            .akl-chip-remove:hover {
+                color: var(--text-error);
+            }
+
+            .akl-button-secondary {
+                padding: 0.6em 1.2em;
+                background: var(--background-secondary);
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 6px;
+                color: var(--text-normal);
+                cursor: pointer;
+                font-size: 0.9em;
+                transition: all 0.2s ease;
+            }
+
+            .akl-button-secondary:hover {
+                background: var(--background-modifier-hover);
+                border-color: var(--interactive-accent);
+            }
+
+            .akl-delete-btn {
+                padding: 0.5em 1em;
+                background: transparent;
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 6px;
+                color: var(--text-muted);
+                cursor: pointer;
+                font-size: 0.85em;
+                transition: all 0.2s ease;
+            }
+
+            .akl-delete-btn:hover {
+                background: var(--background-modifier-error);
+                border-color: var(--text-error);
+                color: var(--text-on-accent);
             }
 
             .akl-section-header h3 {
@@ -5542,6 +6728,11 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
 
             .akl-badge-suggest {
                 background: #ffaa00;
+                color: white;
+            }
+
+            .akl-badge-group {
+                background: var(--interactive-accent);
                 color: white;
             }
 
@@ -5999,6 +7190,39 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         document.head.appendChild(styleEl);
     }
 }
+/**
+ * Keyword Group Assign Modal - Fuzzy search to assign keywords to a group
+ */
+class KeywordGroupAssignModal extends FuzzySuggestModal {
+    constructor(app, plugin, groupId, currentKeywords) {
+        super(app);
+        this.plugin = plugin;
+        this.groupId = groupId;
+        this.currentKeywordIds = new Set(currentKeywords.map(kw => kw.id));
+    }
+
+    getItems() {
+        // Get all keywords that are not already in this group
+        return this.plugin.settings.keywords.filter(kw => !this.currentKeywordIds.has(kw.id));
+    }
+
+    getItemText(keyword) {
+        const groupInfo = keyword.groupId ? ' [In another group]' : '';
+        return `${keyword.keyword || 'Untitled'} → ${keyword.target || '(no target)'}${groupInfo}`;
+    }
+
+    onChooseItem(keyword) {
+        // Assign keyword to this group
+        keyword.groupId = this.groupId;
+        this.plugin.saveSettings();
+        // Refresh the settings display
+        const settingTab = this.app.setting.activeTab;
+        if (settingTab instanceof AutoKeywordLinkerSettingTab) {
+            settingTab.display();
+        }
+    }
+}
+
 /**
  * Folder Suggest Modal - Searchable folder picker with fuzzy matching
  */
