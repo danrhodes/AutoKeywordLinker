@@ -3802,6 +3802,20 @@ module.exports = class AutoKeywordLinker extends Plugin {
             .akl-action-row button {
                 padding: 0.6em 1.2em;
             }
+
+            /* Disabled settings (inherited from group) */
+            .akl-disabled-setting {
+                opacity: 0.6;
+            }
+
+            .akl-disabled-setting .setting-item-control {
+                pointer-events: none;
+            }
+
+            .akl-disabled-setting .setting-item-description {
+                font-style: italic;
+                color: var(--text-muted);
+            }
         `;
 
         document.head.appendChild(styleEl);
@@ -5684,6 +5698,10 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 cardBody.style.display = 'none';
             }
 
+            // Check if keyword is in a group (used throughout the settings below)
+            const isInGroup = !!item.groupId;
+            const groupName = isInGroup ? this.plugin.settings.keywordGroups.find(g => g.id === item.groupId)?.name : null;
+
             // Keyword input field
             new Setting(cardBody)
                 .setName('Keyword')
@@ -5939,51 +5957,69 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             });
 
             // Enable tags toggle
-            new Setting(cardBody)
+            const enableTagsSetting = new Setting(cardBody)
                 .setName('Enable tags')
-                .setDesc('Automatically add tags to source and target notes')
+                .setDesc(isInGroup ? `Inherited from group "${groupName}"` : 'Automatically add tags to source and target notes')
                 .addToggle(toggle => {
                     const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
                     toggle.setValue(effectiveSettings.enableTags || false)
+                        .setDisabled(isInGroup)
                         .onChange(async (value) => {
-                            this.plugin.settings.keywords[i].enableTags = value;
-                            await this.plugin.saveSettings();
-                            this.display();
+                            if (!isInGroup) {
+                                this.plugin.settings.keywords[i].enableTags = value;
+                                await this.plugin.saveSettings();
+                                this.display();
+                            }
                         });
                 });
+            if (isInGroup) {
+                enableTagsSetting.settingEl.addClass('akl-disabled-setting');
+            }
 
             // Use relative markdown links toggle
-            new Setting(cardBody)
+            const useRelativeLinksSetting = new Setting(cardBody)
                 .setName('Use relative markdown links')
-                .setDesc('Create markdown links [text](note.md) instead of wikilinks [[note]]')
+                .setDesc(isInGroup ? `Inherited from group "${groupName}"` : 'Create markdown links [text](note.md) instead of wikilinks [[note]]')
                 .addToggle(toggle => {
                     const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
                     toggle.setValue(effectiveSettings.useRelativeLinks || false)
+                        .setDisabled(isInGroup)
                         .onChange(async (value) => {
-                            this.plugin.settings.keywords[i].useRelativeLinks = value;
-                            await this.plugin.saveSettings();
+                            if (!isInGroup) {
+                                this.plugin.settings.keywords[i].useRelativeLinks = value;
+                                await this.plugin.saveSettings();
+                            }
                         });
                 });
+            if (isInGroup) {
+                useRelativeLinksSetting.settingEl.addClass('akl-disabled-setting');
+            }
 
             // Suggest mode toggle
-            new Setting(cardBody)
+            const suggestModeSetting = new Setting(cardBody)
                 .setName('Suggest instead of auto-link')
-                .setDesc('Highlight keywords as suggestions instead of automatically creating links. Right-click to accept.')
+                .setDesc(isInGroup ? `Inherited from group "${groupName}"` : 'Highlight keywords as suggestions instead of automatically creating links. Right-click to accept.')
                 .addToggle(toggle => {
                     // Show effective value (from group if null)
                     const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
                     toggle.setValue(effectiveSettings.suggestMode || false)
+                        .setDisabled(isInGroup)
                         .onChange(async (value) => {
-                            this.plugin.settings.keywords[i].suggestMode = value;
-                            await this.plugin.saveSettings();
-                            this.display(); // Re-render to update badge
+                            if (!isInGroup) {
+                                this.plugin.settings.keywords[i].suggestMode = value;
+                                await this.plugin.saveSettings();
+                                this.display(); // Re-render to update badge
+                            }
                         });
                 });
+            if (isInGroup) {
+                suggestModeSetting.settingEl.addClass('akl-disabled-setting');
+            }
 
             // Group assignment dropdown
             new Setting(cardBody)
                 .setName('Keyword Group')
-                .setDesc('Assign to a group to inherit group settings. Individual settings can override group defaults.')
+                .setDesc('Assign to a group to inherit group settings. Group settings will be locked and cannot be overridden per-keyword.')
                 .addDropdown(dropdown => {
                     // Add "None" option
                     dropdown.addOption('', '(No group)');
@@ -5997,38 +6033,52 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                         .onChange(async (value) => {
                             this.plugin.settings.keywords[i].groupId = value || null;
                             await this.plugin.saveSettings();
-                            this.display(); // Re-render to update badge
+                            this.display(); // Re-render to update UI and disable/enable settings
                         });
                 });
 
             // Prevent self-link toggle (per-keyword)
-            new Setting(cardBody)
+            const preventSelfLinkSetting = new Setting(cardBody)
                 .setName('Prevent self-link')
-                .setDesc('Prevent this keyword from linking on its own target note (overrides global setting)')
+                .setDesc(isInGroup ? `Inherited from group "${groupName}"` : 'Prevent this keyword from linking on its own target note (overrides global setting)')
                 .addToggle(toggle => {
                     const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
                     toggle.setValue(effectiveSettings.preventSelfLink || false)
+                        .setDisabled(isInGroup)
                         .onChange(async (value) => {
-                            this.plugin.settings.keywords[i].preventSelfLink = value;
-                            await this.plugin.saveSettings();
+                            if (!isInGroup) {
+                                this.plugin.settings.keywords[i].preventSelfLink = value;
+                                await this.plugin.saveSettings();
+                            }
                         });
                 });
+            if (isInGroup) {
+                preventSelfLinkSetting.settingEl.addClass('akl-disabled-setting');
+            }
 
             // Link Scope dropdown
-            new Setting(cardBody)
+            const linkScopeSetting = new Setting(cardBody)
                 .setName('Link scope')
-                .setDesc('Control where this keyword will be linked')
-                .addDropdown(dropdown => dropdown
-                    .addOption('vault-wide', 'Vault-wide (everywhere)')
-                    .addOption('same-folder', 'Same folder only')
-                    .addOption('source-folder', 'Source in specific folder')
-                    .addOption('target-folder', 'Target in specific folder')
-                    .setValue(item.linkScope || 'vault-wide')
-                    .onChange(async (value) => {
-                        this.plugin.settings.keywords[i].linkScope = value;
-                        await this.plugin.saveSettings();
-                        this.display(); // Re-render to show/hide folder input
-                    }));
+                .setDesc(isInGroup ? `Inherited from group "${groupName}"` : 'Control where this keyword will be linked')
+                .addDropdown(dropdown => {
+                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
+                    dropdown.addOption('vault-wide', 'Vault-wide (everywhere)')
+                        .addOption('same-folder', 'Same folder only')
+                        .addOption('source-folder', 'Source in specific folder')
+                        .addOption('target-folder', 'Target in specific folder')
+                        .setValue(effectiveSettings.linkScope || 'vault-wide')
+                        .setDisabled(isInGroup)
+                        .onChange(async (value) => {
+                            if (!isInGroup) {
+                                this.plugin.settings.keywords[i].linkScope = value;
+                                await this.plugin.saveSettings();
+                                this.display(); // Re-render to show/hide folder input
+                            }
+                        });
+                });
+            if (isInGroup) {
+                linkScopeSetting.settingEl.addClass('akl-disabled-setting');
+            }
 
             // Folder selector (only shown for source-folder or target-folder scopes)
             if (item.linkScope === 'source-folder' || item.linkScope === 'target-folder') {
@@ -7211,10 +7261,26 @@ class KeywordGroupAssignModal extends FuzzySuggestModal {
         return `${keyword.keyword || 'Untitled'} → ${keyword.target || '(no target)'}${groupInfo}`;
     }
 
-    onChooseItem(keyword) {
+    async onChooseItem(keyword) {
         // Assign keyword to this group
         keyword.groupId = this.groupId;
-        this.plugin.saveSettings();
+
+        // Reset keyword-specific settings to null so they inherit from the group
+        keyword.enableTags = null;
+        keyword.linkScope = null;
+        keyword.scopeFolder = null;
+        keyword.useRelativeLinks = null;
+        keyword.blockRef = null;
+        keyword.requireTag = null;
+        keyword.onlyInNotesLinkingTo = null;
+        keyword.suggestMode = null;
+        keyword.preventSelfLink = null;
+
+        await this.plugin.saveSettings();
+
+        // Show notice that group settings will be applied to future links
+        new Notice(`Keyword "${keyword.keyword}" assigned to group. Group settings will apply to new links.`);
+
         // Refresh the settings display
         const settingTab = this.app.setting.activeTab;
         if (settingTab instanceof AutoKeywordLinkerSettingTab) {

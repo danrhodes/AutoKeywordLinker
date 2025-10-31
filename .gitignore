@@ -1,1 +1,13 @@
+# User settings (contains personal keywords - each user has their own)
+data.json
+
+# Development
+*.log
+.DS_Store
+/Testing
 /Releases
+
+# IDE
+.vscode/
+.idea/
+.claude
