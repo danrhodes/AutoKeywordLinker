@@ -1,13 +1,18 @@
-# User settings (contains personal keywords - each user has their own)
-data.json
+# Node
+node_modules/
+package-lock.json
 
-# Development
-*.log
+# Build artifacts
+main.js.map
+
+# Backups
+main.js.original
+main.js.backup
+Pre-Refactoring/
+
+# OS
 .DS_Store
-/Testing
-/Releases
-
-# IDE
-.vscode/
-.idea/
+Thumbs.db
+.cmd
 .claude
+.original

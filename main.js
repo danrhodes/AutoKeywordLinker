@@ -1,3004 +1,43 @@
-// Import required Obsidian API components
-const { Plugin, PluginSettingTab, Setting, Notice, Modal, MarkdownView, FuzzySuggestModal, Menu } = require('obsidian');
-
-// Default stop words to exclude from keyword suggestions
-const DEFAULT_STOP_WORDS = [
-    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he', 'in', 'is', 'it',
-    'its', 'of', 'on', 'that', 'the', 'to', 'was', 'will', 'with', 'the', 'this', 'but', 'they',
-    'have', 'had', 'what', 'when', 'where', 'who', 'which', 'why', 'how', 'all', 'each', 'every',
-    'both', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own',
-    'same', 'so', 'than', 'too', 'very', 'can', 'will', 'just', 'should', 'now', 'my', 'me', 'we',
-    'us', 'our', 'your', 'their', 'his', 'her', 'i', 'you', 'do', 'does', 'did', 'am', 'been',
-    'being', 'get', 'got', 'if', 'or', 'may', 'could', 'would', 'should', 'might', 'must', 'one',
-    'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'there', 'then', 'these',
-    'those', 'also', 'any', 'about', 'after', 'again', 'before', 'because', 'between', 'during',
-    'through', 'under', 'over', 'above', 'below', 'up', 'down', 'out', 'off', 'into', 'since',
-    'until', 'while', 'once', 'here', 'there', 'see', 'saw', 'seen', 'go', 'goes', 'going', 'gone',
-    'went', 'want', 'wanted', 'make', 'made', 'use', 'used', 'using', 'day', 'days', 'way', 'ways',
-    'thing', 'things', 'yes', 'no', 'okay', 'ok'
-];
-
-// Default settings that will be used when the plugin is first installed
-const DEFAULT_SETTINGS = {
-    // Array of keyword group objects for organizing keywords
-    keywordGroups: [],
-
-    // Array of keyword objects, each containing the keyword, target note, and variations
-    keywords: [
-        { id: 'kw-1', keyword: 'Keyword1', target: 'Keyword1', variations: [], enableTags: false, linkScope: 'vault-wide', scopeFolder: '', useRelativeLinks: false, blockRef: '', requireTag: '', onlyInNotesLinkingTo: false, suggestMode: false, preventSelfLink: false, groupId: null },
-        { id: 'kw-2', keyword: 'Keyword2', target: 'Keyword2', variations: [], enableTags: false, linkScope: 'vault-wide', scopeFolder: '', useRelativeLinks: false, blockRef: '', requireTag: '', onlyInNotesLinkingTo: false, suggestMode: false, preventSelfLink: false, groupId: null }
-    ],
-    autoLinkOnSave: false,          // Whether to automatically link keywords when saving a note
-    caseSensitive: false,            // Whether keyword matching should be case-sensitive
-    firstOccurrenceOnly: true,       // Whether to link only the first occurrence of each keyword
-    autoCreateNotes: false,           // Whether to automatically create notes that don't exist
-    newNoteFolder: '',               // Folder where new notes will be created (empty = root)
-    newNoteTemplate: '# {{keyword}}\n\nCreated: {{date}}\n\n',  // Template for new notes
-    customStopWords: [],             // Additional stop words to exclude from keyword suggestions (appended to defaults)
-    preventSelfLinkGlobal: false,    // Global setting: prevent linking keywords on their target notes
-    statistics: {                    // Statistics tracking
-        totalLinksCreated: 0,
-        totalNotesProcessed: 0,
-        lastRunDate: null
-    }
-}
-
-// Main plugin class - this is the entry point for the plugin
-module.exports = class AutoKeywordLinker extends Plugin {
-    
-    /**
-     * Called when the plugin is loaded
-     * Sets up commands, settings, and event listeners
-     */
-    async onload() {
-        // Load saved settings from disk (or use defaults if none exist)
-        await this.loadSettings();
-
-        // Set up file watcher to detect settings changes from sync
-        this.setupSettingsWatcher();
-
-        // Register command: Link keywords in the currently active note
-        this.addCommand({
-            id: 'link-keywords-in-current-note',
-            name: 'Link keywords in current note',
-            callback: () => this.linkKeywordsInCurrentNote(false)  // false = not preview mode
-        });
-
-        // Register command: Preview keyword linking in the currently active note
-        this.addCommand({
-            id: 'preview-keywords-in-current-note',
-            name: 'Preview keyword linking in current note',
-            callback: () => this.linkKeywordsInCurrentNote(true)   // true = preview mode
-        });
-
-        // Register command: Link keywords in all notes in the vault
-        this.addCommand({
-            id: 'link-keywords-in-all-notes',
-            name: 'Link keywords in all notes',
-            callback: () => this.linkKeywordsInAllNotes(false)     // false = not preview mode
-        });
-
-        // Register command: Preview keyword linking in all notes
-        this.addCommand({
-            id: 'preview-keywords-in-all-notes',
-            name: 'Preview keyword linking in all notes',
-            callback: () => this.linkKeywordsInAllNotes(true)      // true = preview mode
-        });
-
-        // Register command: View statistics
-        this.addCommand({
-            id: 'view-statistics',
-            name: 'View statistics',
-            callback: () => this.showStatistics()
-        });
-
-        // Register command: Export keywords to JSON
-        this.addCommand({
-            id: 'export-keywords',
-            name: 'Export keywords to JSON',
-            callback: () => this.exportKeywords()
-        });
-
-        // Register command: Import keywords from JSON
-        this.addCommand({
-            id: 'import-keywords',
-            name: 'Import keywords from JSON',
-            callback: () => this.importKeywords()
-        });
-
-        // Register command: Download CSV template
-        this.addCommand({
-            id: 'download-csv-template',
-            name: 'Download CSV template',
-            callback: () => this.downloadCSVTemplate()
-        });
-
-        // Register command: Export keywords to CSV
-        this.addCommand({
-            id: 'export-keywords-csv',
-            name: 'Export keywords to CSV',
-            callback: () => this.exportKeywordsToCSV()
-        });
-
-        // Register command: Import keywords from CSV
-        this.addCommand({
-            id: 'import-keywords-csv',
-            name: 'Import keywords from CSV',
-            callback: () => this.importKeywordsFromCSV()
-        });
-
-        // Register command: Suggest keywords
-        this.addCommand({
-            id: 'suggest-keywords',
-            name: 'Suggest keywords from notes',
-            callback: () => this.suggestKeywords()
-        });
-
-        // Register command: Suggest keywords from current note only
-        this.addCommand({
-            id: 'suggest-keywords-current-note',
-            name: 'Suggest keywords from current note only',
-            callback: () => this.suggestKeywordsFromCurrentNote()
-        });
-
-        // Register command: Accept all suggestions on current line
-        this.addCommand({
-            id: 'accept-suggestion-at-cursor',
-            name: 'Accept all suggestions on current line',
-            editorCallback: (editor) => this.acceptSuggestionAtCursor(editor),
-            hotkeys: [
-                {
-                    modifiers: ["Mod"],
-                    key: "Enter"
-                }
-            ]
-        });
-
-        // Register command: Accept all link suggestions in current note
-        this.addCommand({
-            id: 'accept-all-suggestions',
-            name: 'Accept all link suggestions in current note',
-            editorCallback: (editor) => this.acceptAllSuggestions(editor)
-        });
-
-        // Register command: Review link suggestions (opens modal)
-        this.addCommand({
-            id: 'review-link-suggestions',
-            name: 'Review link suggestions',
-            editorCallback: (editor) => this.reviewSuggestions(editor)
-        });
-
-        // Add the settings tab to Obsidian's settings panel
-        this.addSettingTab(new AutoKeywordLinkerSettingTab(this.app, this));
-
-        // Add custom CSS styles for modals and UI on plugin load
-        this.addCustomStyles();
-
-        // Set up context menu for suggested links
-        this.setupSuggestionContextMenu();
-
-        // Register markdown post-processor for suggested links (Reading mode)
-        this.registerMarkdownPostProcessor((element) => {
-            this.processSuggestedLinks(element);
-        });
-
-        // Set up Live Preview mode click handler
-        this.setupLivePreviewClickHandler();
-
-        // Register editor menu to add our option to right-click menu
-        this.registerEvent(
-            this.app.workspace.on('editor-menu', (menu, editor) => {
-                // Check if there are ANY suggestions in the entire document
-                const content = editor.getValue();
-                const spanPattern = /<span class="akl-suggested-link"[^>]*>([^<]+)<\/span>/;
-
-                if (spanPattern.test(content)) {
-                    // Add menu items at the top
-                    menu.addItem((item) => {
-                        item
-                            .setTitle('📋 Review all link suggestions...')
-                            .setIcon('list-checks')
-                            .onClick(() => {
-                                this.reviewSuggestions(editor);
-                            });
-                    });
-
-                    menu.addItem((item) => {
-                        item
-                            .setTitle('✓ Accept all suggestions on this line')
-                            .setIcon('check')
-                            .onClick(() => {
-                                this.acceptSuggestionAtCursor(editor);
-                            });
-                    });
-
-                    menu.addSeparator();
-                }
-            })
-        );
-
-        // Add status bar item for suggestion count
-        this.statusBarItem = this.addStatusBarItem();
-        this.updateStatusBar();
-
-        // Update status bar when active leaf changes
-        this.registerEvent(
-            this.app.workspace.on('active-leaf-change', () => {
-                this.updateStatusBar();
-            })
-        );
-
-        // Update status bar when editor changes
-        this.registerEvent(
-            this.app.workspace.on('editor-change', () => {
-                setTimeout(() => this.updateStatusBar(), 100);
-            })
-        );
-
-        // If auto-link on save is enabled, set up the event listener
-        if (this.settings.autoLinkOnSave) {
-            this.setupAutoLinkOnSave();
-        }
-    }
-
-    /**
-     * Process suggested links in rendered markdown
-     */
-    processSuggestedLinks(element) {
-        const suggestedLinks = element.querySelectorAll('.akl-suggested-link');
-
-        suggestedLinks.forEach(span => {
-            // Add click handler - just make it clickable to show it's interactive
-            span.addEventListener('click', (evt) => {
-                evt.preventDefault();
-                evt.stopPropagation();
-
-                // Inform user they need to switch to edit mode
-                new Notice('Switch to edit mode to accept suggestions, or use the review modal');
-            });
-
-            // Handle right-click to show review option
-            span.addEventListener('contextmenu', (evt) => {
-                evt.preventDefault();
-                evt.stopPropagation();
-
-                const menu = new Menu();
-
-                // Option to review all suggestions (will need to switch to edit mode)
-                menu.addItem((item) => {
-                    item
-                        .setTitle('📋 Review link suggestions (opens in edit mode)')
-                        .setIcon('list-checks')
-                        .onClick(async () => {
-                            // Switch to edit mode first
-                            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-                            if (view) {
-                                await view.setState({mode: 'source'}, {});
-
-                                // Give it a moment to switch modes, then open review
-                                setTimeout(() => {
-                                    const editor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
-                                    if (editor) {
-                                        this.reviewSuggestions(editor);
-                                    }
-                                }, 100);
-                            }
-                        });
-                });
-
-                menu.showAtMouseEvent(evt);
-            });
-        });
-    }
-
-    /**
-     * Update status bar with suggestion count
-     */
-    updateStatusBar() {
-        if (!this.statusBarItem) return;
-
-        const editor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
-        if (!editor) {
-            this.statusBarItem.setText('');
-            this.statusBarItem.style.display = 'none';
-            return;
-        }
-
-        const content = editor.getValue();
-        const spanPattern = /<span class="akl-suggested-link"[^>]*>([^<]+)<\/span>/g;
-        const matches = content.match(spanPattern);
-        const count = matches ? matches.length : 0;
-
-        if (count > 0) {
-            this.statusBarItem.setText(`💡 ${count} link suggestion${count > 1 ? 's' : ''}`);
-            this.statusBarItem.style.cursor = 'pointer';
-            this.statusBarItem.style.display = 'inline-block';
-            this.statusBarItem.addClass('mod-clickable');
-            this.statusBarItem.setAttribute('aria-label', 'Click to review suggestions');
-
-            // Add click handler to open review modal
-            this.statusBarItem.onclick = () => {
-                const currentEditor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
-                if (currentEditor) {
-                    this.reviewSuggestions(currentEditor);
-                }
-            };
-        } else {
-            this.statusBarItem.setText('');
-            this.statusBarItem.style.display = 'none';
-            this.statusBarItem.onclick = null;
-        }
-    }
-
-    /**
-     * Set up context menu for suggested links
-     */
-    setupSuggestionContextMenu() {
-        this.registerDomEvent(document, 'contextmenu', (evt) => {
-            const target = evt.target;
-
-            // Check if right-click was on a suggested link
-            if (target && target.classList && target.classList.contains('akl-suggested-link')) {
-                evt.preventDefault();
-
-                // Create a context menu
-                const menu = new Menu();
-
-                menu.addItem((item) => {
-                    item
-                        .setTitle('Accept link suggestion')
-                        .setIcon('check')
-                        .onClick(() => {
-                            this.acceptSuggestionElement(target);
-                        });
-                });
-
-                menu.showAtMouseEvent(evt);
-            }
-        });
-    }
-
-    /**
-     * Set up click handler for Live Preview mode
-     */
-    setupLivePreviewClickHandler() {
-        this.registerDomEvent(document, 'click', (evt) => {
-            // Check if we're in a markdown view
-            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-            if (!view) return;
-
-            const editor = view.editor;
-            if (!editor) return;
-
-            // Get the clicked position in the editor
-            const clickedElement = evt.target;
-
-            // Check if the clicked element or its parent has our suggestion class
-            let suggestionElement = null;
-            if (clickedElement.classList && clickedElement.classList.contains('akl-suggested-link')) {
-                suggestionElement = clickedElement;
-            } else if (clickedElement.parentElement && clickedElement.parentElement.classList &&
-                       clickedElement.parentElement.classList.contains('akl-suggested-link')) {
-                suggestionElement = clickedElement.parentElement;
-            }
-
-            if (suggestionElement) {
-                evt.preventDefault();
-                evt.stopPropagation();
-
-                // Get cursor position
-                const cursor = editor.getCursor();
-                const line = editor.getLine(cursor.line);
-
-                // Try to find suggestion at this line
-                this.showSuggestionMenuAtLine(editor, cursor.line, line, evt);
-            }
-        });
-
-        // Also handle right-click for Live Preview
-        this.registerDomEvent(document, 'contextmenu', (evt) => {
-            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-            if (!view) return;
-
-            const editor = view.editor;
-            if (!editor) return;
-
-            const clickedElement = evt.target;
-
-            let suggestionElement = null;
-            if (clickedElement.classList && clickedElement.classList.contains('akl-suggested-link')) {
-                suggestionElement = clickedElement;
-            } else if (clickedElement.parentElement && clickedElement.parentElement.classList &&
-                       clickedElement.parentElement.classList.contains('akl-suggested-link')) {
-                suggestionElement = clickedElement.parentElement;
-            }
-
-            if (suggestionElement) {
-                evt.preventDefault();
-                evt.stopPropagation();
-
-                const cursor = editor.getCursor();
-                const line = editor.getLine(cursor.line);
-
-                this.showSuggestionMenuAtLine(editor, cursor.line, line, evt);
-            }
-        });
-    }
-
-    /**
-     * Show suggestion menu for a specific line
-     */
-    showSuggestionMenuAtLine(editor, lineNumber, lineText, evt) {
-        // Find all suggestion spans in this line
-        const spanPattern = /<span class="akl-suggested-link" data-target="([^"]*)" data-block="([^"]*)" data-use-relative="([^"]*)"[^>]*>([^<]+)<\/span>/g;
-        const matches = [...lineText.matchAll(spanPattern)];
-
-        if (matches.length === 0) return;
-
-        // If there's only one match, show menu for it
-        // If there are multiple, show menu for the first one (could be enhanced to detect which one was clicked)
-        const match = matches[0];
-        const targetNote = match[1];
-        const blockRef = match[2];
-        const useRelative = match[3] === 'true';
-        const matchText = match[4];
-
-        const menu = new Menu();
-
-        menu.addItem((item) => {
-            item
-                .setTitle(`Accept link suggestion: "${matchText}"`)
-                .setIcon('check')
-                .onClick(() => {
-                    this.acceptSuggestionInLine(editor, lineNumber, lineText, matchText, targetNote, blockRef, useRelative);
-                });
-        });
-
-        menu.showAtMouseEvent(evt);
-    }
-
-    /**
-     * Accept a suggestion in a specific line
-     */
-    acceptSuggestionInLine(editor, lineNumber, lineText, matchText, targetNote, blockRef, useRelative) {
-        // Find the exact span to replace
-        const spanPattern = new RegExp(`<span class="akl-suggested-link" data-target="${this.escapeRegex(targetNote)}" data-block="${this.escapeRegex(blockRef)}" data-use-relative="${useRelative ? 'true' : 'false'}"[^>]*>${this.escapeRegex(matchText)}</span>`);
-
-        if (!spanPattern.test(lineText)) return;
-
-        // Check if current line is inside a table
-        const content = editor.getValue();
-        const lineStart = editor.posToOffset({ line: lineNumber, ch: 0 });
-        const insideTable = this.isInsideTable(content, lineStart);
-
-        // Create the actual link
-        let link;
-        const targetWithBlock = blockRef ? `${targetNote}#${blockRef}` : targetNote;
-
-        if (useRelative) {
-            // Use relative markdown link format
-            // Escape pipe characters in the display text if inside a table to prevent breaking table columns
-            const escapedMatchText = insideTable ? matchText.replace(/\|/g, '\\|') : matchText;
-            const encodedTarget = encodeURIComponent(targetNote) + '.md';
-            const blockPart = blockRef ? `#${blockRef}` : '';
-            link = `[${escapedMatchText}](${encodedTarget}${blockPart})`;
-        } else {
-            // Use wikilink format
-            if (insideTable) {
-                // Inside tables: Escape the pipe with single backslash \| to prevent breaking table formatting
-                link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}\\|${matchText}]]`;
-            } else {
-                // Outside table: standard wikilink format with | separator for alias
-                link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
-            }
-        }
-
-        // Replace in the line
-        const newLine = lineText.replace(spanPattern, link);
-        editor.setLine(lineNumber, newLine);
-
-        new Notice('Link suggestion accepted');
-
-        // Update status bar
-        setTimeout(() => this.updateStatusBar(), 100);
-    }
-
-    /**
-     * Review all link suggestions in a modal
-     */
-    reviewSuggestions(editor) {
-        const content = editor.getValue();
-        const suggestions = [];
-
-        // Parse all lines to find suggestions
-        const lines = content.split('\n');
-        const spanPattern = /<span class="akl-suggested-link" data-target="([^"]*)" data-block="([^"]*)" data-use-relative="([^"]*)"[^>]*>([^<]+)<\/span>/g;
-
-        lines.forEach((line, lineNumber) => {
-            let match;
-            spanPattern.lastIndex = 0; // Reset regex state
-            while ((match = spanPattern.exec(line)) !== null) {
-                suggestions.push({
-                    lineNumber: lineNumber,
-                    targetNote: match[1],
-                    blockRef: match[2],
-                    useRelative: match[3] === 'true',
-                    matchText: match[4],
-                    fullMatch: match[0]
-                });
-            }
-        });
-
-        if (suggestions.length === 0) {
-            new Notice('No link suggestions found in current note');
-            return;
-        }
-
-        // Open the review modal
-        new SuggestionReviewModal(this.app, editor, suggestions).open();
-    }
-
-    /**
-     * Accept all link suggestions on the current line
-     */
-    acceptSuggestionAtCursor(editor) {
-        const cursor = editor.getCursor();
-        let line = editor.getLine(cursor.line);
-
-        // Find ALL suggestion spans on this line
-        const spanPattern = /<span class="akl-suggested-link" data-target="([^"]*)" data-block="([^"]*)" data-use-relative="([^"]*)"[^>]*>([^<]+)<\/span>/g;
-        const matches = [...line.matchAll(spanPattern)];
-
-        if (matches.length === 0) {
-            new Notice('No link suggestions found on this line');
-            return;
-        }
-
-        // Check if current line is inside a table
-        const content = editor.getValue();
-        const lineStart = editor.posToOffset({ line: cursor.line, ch: 0 });
-        const insideTable = this.isInsideTable(content, lineStart);
-
-        // Process all matches - replace each span with its corresponding link
-        let acceptedCount = 0;
-        matches.forEach(match => {
-            const fullMatch = match[0];
-            const targetNote = match[1];
-            const blockRef = match[2];
-            const useRelative = match[3] === 'true';
-            const matchText = match[4];
-
-            // Create the actual link
-            let link;
-            const targetWithBlock = blockRef ? `${targetNote}#${blockRef}` : targetNote;
-
-            if (useRelative) {
-                // Use relative markdown link format
-                // Escape pipe characters in the display text if inside a table to prevent breaking table columns
-                const escapedMatchText = insideTable ? matchText.replace(/\|/g, '\\|') : matchText;
-                const encodedTarget = encodeURIComponent(targetNote) + '.md';
-                const blockPart = blockRef ? `#${blockRef}` : '';
-                link = `[${escapedMatchText}](${encodedTarget}${blockPart})`;
-            } else {
-                // Use wikilink format
-                if (insideTable) {
-                    // Inside tables: Escape the pipe with single backslash \| to prevent breaking table formatting
-                    link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}\\|${matchText}]]`;
-                } else {
-                    // Outside table: standard wikilink format with | separator for alias
-                    link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
-                }
-            }
-
-            // Replace this span with the link
-            line = line.replace(fullMatch, link);
-            acceptedCount++;
-        });
-
-        // Update the line with all replacements
-        editor.setLine(cursor.line, line);
-
-        new Notice(`Accepted ${acceptedCount} link suggestion${acceptedCount > 1 ? 's' : ''} on this line`);
-
-        // Update status bar
-        setTimeout(() => this.updateStatusBar(), 100);
-    }
-
-    /**
-     * Accept all link suggestions in the current note
-     */
-    acceptAllSuggestions(editor) {
-        const content = editor.getValue();
-        let newContent = content;
-        let count = 0;
-
-        // Find all suggestion spans
-        const spanPattern = /<span class="akl-suggested-link" data-target="([^"]*)" data-block="([^"]*)" data-use-relative="([^"]*)"[^>]*>([^<]+)<\/span>/g;
-
-        newContent = content.replace(spanPattern, (match, targetNote, blockRef, useRelative, matchText, offset) => {
-            count++;
-
-            // Check if this match is inside a table
-            const insideTable = this.isInsideTable(content, offset);
-
-            // Create the actual link
-            let link;
-            const targetWithBlock = blockRef ? `${targetNote}#${blockRef}` : targetNote;
-
-            if (useRelative === 'true') {
-                // Use relative markdown link format
-                // Escape pipe characters in the display text if inside a table to prevent breaking table columns
-                const escapedMatchText = insideTable ? matchText.replace(/\|/g, '\\|') : matchText;
-                const encodedTarget = encodeURIComponent(targetNote) + '.md';
-                const blockPart = blockRef ? `#${blockRef}` : '';
-                link = `[${escapedMatchText}](${encodedTarget}${blockPart})`;
-            } else {
-                // Use wikilink format
-                if (insideTable) {
-                    // Inside tables: Escape the pipe with single backslash \| to prevent breaking table formatting
-                    link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}\\|${matchText}]]`;
-                } else {
-                    // Outside table: standard wikilink format with | separator for alias
-                    link = targetNote === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
-                }
-            }
-
-            return link;
-        });
-
-        if (count > 0) {
-            editor.setValue(newContent);
-            new Notice(`Accepted ${count} link suggestion${count > 1 ? 's' : ''}`);
-            // Update status bar
-            setTimeout(() => this.updateStatusBar(), 100);
-        } else {
-            new Notice('No link suggestions found in current note');
-        }
-    }
-
-    /**
-     * Show statistics modal
-     */
-    showStatistics() {
-        new StatisticsModal(this.app, this.settings).open();
-    }
-
-    /**
-     * Set up file watcher to detect settings changes from sync
-     * This allows the plugin to automatically reload settings when synced from other devices
-     */
-    setupSettingsWatcher() {
-        // Track if we're currently saving to prevent reload loops
-        this.isSaving = false;
-
-        // Use polling to check for settings changes since vault events don't fire for .obsidian files
-        // Store the last known state of the settings
-        let lastSettingsHash = JSON.stringify(this.settings.keywords);
-
-        // Check for changes every 2 seconds
-        this.registerInterval(
-            window.setInterval(async () => {
-                if (this.isSaving) {
-                    // Skip check if we're currently saving
-                    return;
-                }
-
-                try {
-                    // Load the current data from disk
-                    const diskData = await this.loadData();
-
-                    if (diskData && diskData.keywords) {
-                        const currentHash = JSON.stringify(diskData.keywords);
-
-                        // Compare with our last known state
-                        if (currentHash !== lastSettingsHash) {
-                            console.log('Auto Keyword Linker: Settings changed externally, reloading...');
-
-                            // Update our settings
-                            this.settings = Object.assign({}, DEFAULT_SETTINGS, diskData);
-
-                            // Ensure statistics object exists
-                            if (!this.settings.statistics) {
-                                this.settings.statistics = DEFAULT_SETTINGS.statistics;
-                            }
-
-                            // Ensure customStopWords exists and is an array
-                            if (!this.settings.customStopWords || !Array.isArray(this.settings.customStopWords)) {
-                                this.settings.customStopWords = DEFAULT_SETTINGS.customStopWords;
-                            }
-
-                            // Ensure enableTags, linkScope, useRelativeLinks, and blockRef fields exist for all keywords
-                            if (this.settings.keywords) {
-                                for (let keyword of this.settings.keywords) {
-                                    if (keyword.enableTags === undefined) {
-                                        keyword.enableTags = false;
-                                    }
-                                    if (keyword.linkScope === undefined) {
-                                        keyword.linkScope = 'vault-wide';
-                                    }
-                                    if (keyword.scopeFolder === undefined) {
-                                        keyword.scopeFolder = '';
-                                    }
-                                    if (keyword.useRelativeLinks === undefined) {
-                                        keyword.useRelativeLinks = false;
-                                    }
-                                    if (keyword.blockRef === undefined) {
-                                        keyword.blockRef = '';
-                                    }
-                                    if (keyword.requireTag === undefined) {
-                                        keyword.requireTag = '';
-                                    }
-                                    if (keyword.onlyInNotesLinkingTo === undefined) {
-                                        keyword.onlyInNotesLinkingTo = false;
-                                    }
-                                }
-                            }
-
-                            // Update our hash
-                            lastSettingsHash = currentHash;
-
-                            // Settings synced silently in background
-                            // UI will update next time settings are opened
-                        }
-                    }
-                } catch (error) {
-                    // Ignore errors - file might be temporarily unavailable during sync
-                    console.log('Auto Keyword Linker: Error checking for settings changes:', error);
-                }
-            }, 15000) // Check every 15 seconds
-        );
-    }
-
-    /**
-     * Export keywords to JSON file
-     */
-    async exportKeywords() {
-        try {
-            const dataStr = JSON.stringify(this.settings.keywords, null, 2);
-            const date = new Date().toISOString().split('T')[0];
-            const filename = `auto-keyword-linker-export-${date}.json`;
-            
-            // Create file in vault root
-            await this.app.vault.create(filename, dataStr);
-            new Notice(`Keywords exported to ${filename}`);
-        } catch (error) {
-            new Notice(`Export failed: ${error.message}`);
-        }
-    }
-
-    /**
-     * Import keywords from JSON file
-     */
-    async importKeywords() {
-        new ImportModal(this.app, this).open();
-    }
-
-    /**
-     * Download CSV template for bulk keyword import
-     */
-    async downloadCSVTemplate() {
-        try {
-            const headers = 'keyword,target,variations,enableTags,linkScope,scopeFolder,useRelativeLinks,blockRef,requireTag,onlyInNotesLinkingTo,suggestMode,preventSelfLink';
-            const example1 = 'Python,Languages/Python,"python|py|Python3",false,vault-wide,,false,,,false,false';
-            const example2 = 'JavaScript,Languages/JavaScript,"js|javascript",false,vault-wide,,false,,,false,false';
-            const example3 = 'API,Documentation/API,"api|REST API",false,same-folder,,false,,reviewed,true,false';
-
-            const csvContent = `${headers}\n${example1}\n${example2}\n${example3}\n`;
-
-            const filename = 'auto-keyword-linker-template.csv';
-            await this.app.vault.create(filename, csvContent);
-            new Notice(`CSV template downloaded: ${filename}`);
-        } catch (error) {
-            new Notice(`Template download failed: ${error.message}`);
-        }
-    }
-
-    /**
-     * Export keywords to CSV file
-     */
-    async exportKeywordsToCSV() {
-        try {
-            const headers = 'keyword,target,variations,enableTags,linkScope,scopeFolder,useRelativeLinks,blockRef,requireTag,onlyInNotesLinkingTo,suggestMode,preventSelfLink';
-            const rows = [headers];
-
-            for (let item of this.settings.keywords) {
-                // Convert variations array to pipe-separated string
-                const variations = (item.variations && item.variations.length > 0)
-                    ? `"${item.variations.join('|')}"`
-                    : '';
-
-                // Build CSV row
-                const row = [
-                    this.escapeCSV(item.keyword),
-                    this.escapeCSV(item.target),
-                    variations,
-                    item.enableTags || false,
-                    item.linkScope || 'vault-wide',
-                    this.escapeCSV(item.scopeFolder || ''),
-                    item.useRelativeLinks || false,
-                    this.escapeCSV(item.blockRef || ''),
-                    this.escapeCSV(item.requireTag || ''),
-                    item.onlyInNotesLinkingTo || false,
-                    item.suggestMode || false,
-                    item.preventSelfLink || false
-                ].join(',');
-
-                rows.push(row);
-            }
-
-            const csvContent = rows.join('\n');
-            const date = new Date().toISOString().split('T')[0];
-            const filename = `auto-keyword-linker-export-${date}.csv`;
-
-            await this.app.vault.create(filename, csvContent);
-            new Notice(`Keywords exported to ${filename}`);
-        } catch (error) {
-            new Notice(`CSV export failed: ${error.message}`);
-        }
-    }
-
-    /**
-     * Import keywords from CSV file
-     */
-    async importKeywordsFromCSV() {
-        new ImportCSVModal(this.app, this).open();
-    }
-
-    /**
-     * Escape CSV field if it contains special characters
-     */
-    escapeCSV(field) {
-        if (typeof field !== 'string') return field;
-        if (field.includes(',') || field.includes('"') || field.includes('\n')) {
-            return `"${field.replace(/"/g, '""')}"`;
-        }
-        return field;
-    }
-
-    /**
-     * Parse CSV line respecting quoted fields
-     */
-    parseCSVLine(line) {
-        const fields = [];
-        let currentField = '';
-        let inQuotes = false;
-
-        for (let i = 0; i < line.length; i++) {
-            const char = line[i];
-            const nextChar = line[i + 1];
-
-            if (char === '"' && inQuotes && nextChar === '"') {
-                // Escaped quote
-                currentField += '"';
-                i++; // Skip next quote
-            } else if (char === '"') {
-                // Toggle quote mode
-                inQuotes = !inQuotes;
-            } else if (char === ',' && !inQuotes) {
-                // Field separator
-                fields.push(currentField.trim());
-                currentField = '';
-            } else {
-                currentField += char;
-            }
-        }
-
-        // Add last field
-        fields.push(currentField.trim());
-
-        return fields;
-    }
-
-    /**
-     * Open the Suggested Keyword Builder modal
-     */
-    async suggestKeywords() {
-        new SuggestedKeywordBuilderModal(this.app, this).open();
-    }
-
-    /**
-     * Open the Suggested Keyword Builder modal for current note only
-     */
-    async suggestKeywordsFromCurrentNote() {
-        const activeFile = this.app.workspace.getActiveFile();
-        if (!activeFile) {
-            new Notice('No active note found. Please open a note first.');
-            return;
-        }
-        new SuggestedKeywordBuilderModal(this.app, this, activeFile).open();
-    }
-
-    /**
-     * Get combined stop words (default + custom)
-     * @returns {Set} Set of stop words to exclude
-     */
-    getStopWords() {
-        const stopWords = new Set(DEFAULT_STOP_WORDS);
-        // Add custom stop words from settings
-        if (this.settings.customStopWords && Array.isArray(this.settings.customStopWords)) {
-            for (let word of this.settings.customStopWords) {
-                if (word && typeof word === 'string') {
-                    stopWords.add(word.toLowerCase().trim());
-                }
-            }
-        }
-        return stopWords;
-    }
-
-    /**
-     * Extract meaningful words from text
-     * @param {string} text - Text to extract words from
-     * @param {boolean} isTitle - Whether this is a title (affects processing)
-     * @returns {Array} Array of normalized words
-     */
-    extractWordsFromText(text, isTitle = false) {
-        const words = [];
-        const stopWords = this.getStopWords();
-
-        // Split by common delimiters
-        let parts = text.split(/[\s\-_\/\\,;:]+/);
-
-        for (let part of parts) {
-            // Handle camelCase and PascalCase
-            const subParts = part.split(/(?=[A-Z])/).filter(p => p.length > 0);
-
-            for (let subPart of subParts) {
-                // Clean and normalize
-                let word = subPart.trim()
-                    .replace(/[^\w\s]/g, '') // Remove special chars
-                    .trim();
-
-                if (word.length === 0) continue;
-
-                // Normalize to Title Case
-                word = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-
-                // Filter out stop words and short words
-                if (word.length >= 3 && !stopWords.has(word.toLowerCase())) {
-                    words.push(word);
-                }
-            }
-        }
-
-        return words;
-    }
-
-    /**
-     * Extract meaningful phrases (2-4 words) from text
-     * @param {string} text - Text to extract phrases from
-     * @returns {Array} Array of normalized phrases
-     */
-    extractPhrasesFromText(text) {
-        const phrases = [];
-        const stopWords = this.getStopWords();
-
-        // Split into sentences/lines
-        const lines = text.split(/[.\n]/);
-
-        for (let line of lines) {
-            // Extract capitalized words (likely proper nouns/important terms)
-            const words = line.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/g);
-
-            if (words) {
-                for (let phrase of words) {
-                    phrase = phrase.trim();
-
-                    // Check if phrase contains stop words only
-                    const phraseWords = phrase.split(/\s+/);
-                    const hasNonStopWord = phraseWords.some(w => !stopWords.has(w.toLowerCase()));
-
-                    if (hasNonStopWord && phrase.length >= 5) {
-                        phrases.push(phrase);
-                    }
-                }
-            }
-        }
-
-        return phrases;
-    }
-
-    /**
-     * Analyze notes in the vault and extract keyword suggestions
-     * @returns {Array} Array of suggestion objects with word, count, and notes
-     */
-    async analyzeNotesForKeywords() {
-        const files = this.app.vault.getMarkdownFiles();
-        const wordFrequency = new Map(); // word -> { count, notes: Set }
-        const phraseFrequency = new Map(); // phrase -> { count, notes: Set }
-
-        // Get existing keywords (normalized to lowercase for comparison)
-        const existingKeywords = new Set(
-            this.settings.keywords.map(k => k.keyword.toLowerCase())
-        );
-
-        // Add variations to existing keywords set
-        for (let item of this.settings.keywords) {
-            if (item.variations && item.variations.length > 0) {
-                for (let variation of item.variations) {
-                    existingKeywords.add(variation.toLowerCase());
-                }
-            }
-        }
-
-        // Add auto-discovered aliases from frontmatter to existing keywords set
-        for (let item of this.settings.keywords) {
-            const aliases = this.getAliasesForNote(item.target);
-            if (aliases && aliases.length > 0) {
-                for (let alias of aliases) {
-                    existingKeywords.add(alias.toLowerCase());
-                }
-            }
-        }
-
-        // Process each file
-        for (let file of files) {
-            // Extract from note title
-            const titleWords = this.extractWordsFromText(file.basename, true);
-            const titlePhrases = this.extractPhrasesFromText(file.basename);
-
-            // Add title words (weighted 3x)
-            for (let word of titleWords) {
-                if (!existingKeywords.has(word.toLowerCase())) {
-                    if (!wordFrequency.has(word)) {
-                        wordFrequency.set(word, { count: 0, notes: new Set() });
-                    }
-                    const data = wordFrequency.get(word);
-                    data.count += 3; // Weight title words higher
-                    data.notes.add(file.basename);
-                }
-            }
-
-            // Add title phrases (weighted 3x)
-            for (let phrase of titlePhrases) {
-                if (!existingKeywords.has(phrase.toLowerCase())) {
-                    if (!phraseFrequency.has(phrase)) {
-                        phraseFrequency.set(phrase, { count: 0, notes: new Set() });
-                    }
-                    const data = phraseFrequency.get(phrase);
-                    data.count += 3;
-                    data.notes.add(file.basename);
-                }
-            }
-
-            // Extract from note content (first 5000 chars)
-            try {
-                const content = await this.app.vault.read(file);
-                const limitedContent = content.substring(0, 5000);
-
-                // Remove frontmatter
-                let contentWithoutFrontmatter = limitedContent.replace(/^---[\s\S]*?---\n/, '');
-
-                // Remove all wikilinks [[link]] and [[link|alias]] - they're already keywords or shouldn't be suggested
-                contentWithoutFrontmatter = contentWithoutFrontmatter.replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '');
-
-                // Remove markdown links [text](url)
-                contentWithoutFrontmatter = contentWithoutFrontmatter.replace(/\[([^\]]+)\]\([^)]+\)/g, '');
-
-                const contentWords = this.extractWordsFromText(contentWithoutFrontmatter, false);
-                const contentPhrases = this.extractPhrasesFromText(contentWithoutFrontmatter);
-
-                // Add content words (normal weight)
-                for (let word of contentWords) {
-                    if (!existingKeywords.has(word.toLowerCase())) {
-                        if (!wordFrequency.has(word)) {
-                            wordFrequency.set(word, { count: 0, notes: new Set() });
-                        }
-                        const data = wordFrequency.get(word);
-                        data.count += 1;
-                        data.notes.add(file.basename);
-                    }
-                }
-
-                // Add content phrases (normal weight)
-                for (let phrase of contentPhrases) {
-                    if (!existingKeywords.has(phrase.toLowerCase())) {
-                        if (!phraseFrequency.has(phrase)) {
-                            phraseFrequency.set(phrase, { count: 0, notes: new Set() });
-                        }
-                        const data = phraseFrequency.get(phrase);
-                        data.count += 1;
-                        data.notes.add(file.basename);
-                    }
-                }
-            } catch (error) {
-                // Skip files that can't be read
-                console.log(`Error reading ${file.path}:`, error);
-            }
-        }
-
-        // Combine words and phrases into suggestions
-        const suggestions = [];
-
-        // Add word suggestions
-        for (let [word, data] of wordFrequency) {
-            suggestions.push({
-                keyword: word,
-                count: data.count,
-                notes: Array.from(data.notes).slice(0, 5), // Show max 5 notes
-                totalNotes: data.notes.size
-            });
-        }
-
-        // Add phrase suggestions
-        for (let [phrase, data] of phraseFrequency) {
-            suggestions.push({
-                keyword: phrase,
-                count: data.count,
-                notes: Array.from(data.notes).slice(0, 5),
-                totalNotes: data.notes.size
-            });
-        }
-
-        // Sort by count (descending) then by keyword length (descending)
-        suggestions.sort((a, b) => {
-            if (b.count !== a.count) {
-                return b.count - a.count;
-            }
-            return b.keyword.length - a.keyword.length;
-        });
-
-        return suggestions;
-    }
-
-    /**
-     * Analyze a single note and extract keyword suggestions
-     * @param {TFile} file - The file to analyze
-     * @returns {Array} Array of suggestion objects with word, count, and notes
-     */
-    async analyzeCurrentNoteForKeywords(file) {
-        const wordFrequency = new Map(); // word -> { count, notes: Set }
-        const phraseFrequency = new Map(); // phrase -> { count, notes: Set }
-
-        // Get existing keywords (normalized to lowercase for comparison)
-        const existingKeywords = new Set(
-            this.settings.keywords.map(k => k.keyword.toLowerCase())
-        );
-
-        // Add variations to existing keywords set
-        for (let item of this.settings.keywords) {
-            if (item.variations && item.variations.length > 0) {
-                for (let variation of item.variations) {
-                    existingKeywords.add(variation.toLowerCase());
-                }
-            }
-        }
-
-        // Add auto-discovered aliases from frontmatter to existing keywords set
-        for (let item of this.settings.keywords) {
-            const aliases = this.getAliasesForNote(item.target);
-            if (aliases && aliases.length > 0) {
-                for (let alias of aliases) {
-                    existingKeywords.add(alias.toLowerCase());
-                }
-            }
-        }
-
-        // Extract from note title
-        const titleWords = this.extractWordsFromText(file.basename, true);
-        const titlePhrases = this.extractPhrasesFromText(file.basename);
-
-        // Add title words (weighted 3x)
-        for (let word of titleWords) {
-            if (!existingKeywords.has(word.toLowerCase())) {
-                if (!wordFrequency.has(word)) {
-                    wordFrequency.set(word, { count: 0, notes: new Set() });
-                }
-                const data = wordFrequency.get(word);
-                data.count += 3; // Weight title words higher
-                data.notes.add(file.basename);
-            }
-        }
-
-        // Add title phrases (weighted 3x)
-        for (let phrase of titlePhrases) {
-            if (!existingKeywords.has(phrase.toLowerCase())) {
-                if (!phraseFrequency.has(phrase)) {
-                    phraseFrequency.set(phrase, { count: 0, notes: new Set() });
-                }
-                const data = phraseFrequency.get(phrase);
-                data.count += 3;
-                data.notes.add(file.basename);
-            }
-        }
-
-        // Extract from note content (entire content for single note)
-        try {
-            const content = await this.app.vault.read(file);
-
-            // Remove frontmatter
-            let contentWithoutFrontmatter = content.replace(/^---[\s\S]*?---\n/, '');
-
-            // Remove all wikilinks [[link]] and [[link|alias]] - they're already keywords or shouldn't be suggested
-            contentWithoutFrontmatter = contentWithoutFrontmatter.replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '');
-
-            // Remove markdown links [text](url)
-            contentWithoutFrontmatter = contentWithoutFrontmatter.replace(/\[([^\]]+)\]\([^)]+\)/g, '');
-
-            const contentWords = this.extractWordsFromText(contentWithoutFrontmatter, false);
-            const contentPhrases = this.extractPhrasesFromText(contentWithoutFrontmatter);
-
-            // Add content words (normal weight)
-            for (let word of contentWords) {
-                if (!existingKeywords.has(word.toLowerCase())) {
-                    if (!wordFrequency.has(word)) {
-                        wordFrequency.set(word, { count: 0, notes: new Set() });
-                    }
-                    const data = wordFrequency.get(word);
-                    data.count += 1;
-                    data.notes.add(file.basename);
-                }
-            }
-
-            // Add content phrases (normal weight)
-            for (let phrase of contentPhrases) {
-                if (!existingKeywords.has(phrase.toLowerCase())) {
-                    if (!phraseFrequency.has(phrase)) {
-                        phraseFrequency.set(phrase, { count: 0, notes: new Set() });
-                    }
-                    const data = phraseFrequency.get(phrase);
-                    data.count += 1;
-                    data.notes.add(file.basename);
-                }
-            }
-        } catch (error) {
-            console.log(`Error reading ${file.path}:`, error);
-            throw error;
-        }
-
-        // Combine words and phrases into suggestions
-        const suggestions = [];
-
-        // Add word suggestions
-        for (let [word, data] of wordFrequency) {
-            suggestions.push({
-                keyword: word,
-                count: data.count,
-                notes: Array.from(data.notes),
-                totalNotes: data.notes.size
-            });
-        }
-
-        // Add phrase suggestions
-        for (let [phrase, data] of phraseFrequency) {
-            suggestions.push({
-                keyword: phrase,
-                count: data.count,
-                notes: Array.from(data.notes),
-                totalNotes: data.notes.size
-            });
-        }
-
-        // Sort by count (descending) then by keyword length (descending)
-        suggestions.sort((a, b) => {
-            if (b.count !== a.count) {
-                return b.count - a.count;
-            }
-            return b.keyword.length - a.keyword.length;
-        });
-
-        return suggestions;
-    }
-
-    /**
-     * Setup auto-link on save event listener
-     */
-    setupAutoLinkOnSave() {
-        // Debounce timer for tag additions only
-        let tagDebounceTimer = null;
-        const pendingTagOperations = new Map(); // file path -> Set of tags
-        const processingFiles = new Set(); // Track which files are currently being processed
-
-        this.registerEvent(
-            // Listen for file modification events
-            this.app.vault.on('modify', (file) => {
-                // CRITICAL: Only process markdown files, skip all attachments
-                // Skip if we're currently processing this file to avoid recursion
-                if (file.extension === 'md' && !processingFiles.has(file.path)) {
-                    // Mark this file as being processed
-                    processingFiles.add(file.path);
-
-                    // Link keywords immediately (without adding tags)
-                    this.linkKeywordsInFile(file, false, true).then(result => {
-                        // Unmark the file
-                        processingFiles.delete(file.path);
-                        // If there are tags to add, accumulate them
-                        if (result && result.pendingTags) {
-                            // Get or create the pending tags entry for this file
-                            if (!pendingTagOperations.has(file.path)) {
-                                pendingTagOperations.set(file.path, {
-                                    tagsToAdd: new Set(),
-                                    targetNotesForTags: new Map()
-                                });
-                            }
-
-                            const pending = pendingTagOperations.get(file.path);
-
-                            // Accumulate tags (using Set to avoid duplicates)
-                            result.pendingTags.tagsToAdd.forEach(tag => pending.tagsToAdd.add(tag));
-
-                            // Accumulate target note tags
-                            result.pendingTags.targetNotesForTags.forEach((tagName, noteName) => {
-                                pending.targetNotesForTags.set(noteName, tagName);
-                            });
-
-                            // Clear existing timer
-                            if (tagDebounceTimer) {
-                                clearTimeout(tagDebounceTimer);
-                            }
-
-                            // Set new timer - add tags after 1 second of inactivity
-                            tagDebounceTimer = setTimeout(async () => {
-                                try {
-                                    // Process all pending tag operations
-                                    for (const [filePath, tagInfo] of pendingTagOperations.entries()) {
-                                        const targetFile = this.app.vault.getAbstractFileByPath(filePath);
-                                        if (targetFile && targetFile.extension === 'md') {
-                                            // Mark file as being processed to prevent recursion
-                                            processingFiles.add(filePath);
-
-                                            await this.addTagsToFile(
-                                                targetFile,
-                                                Array.from(tagInfo.tagsToAdd),
-                                                tagInfo.targetNotesForTags
-                                            );
-
-                                            // Unmark after a short delay to ensure modify event is ignored
-                                            setTimeout(() => {
-                                                processingFiles.delete(filePath);
-                                            }, 100);
-                                        }
-                                    }
-                                } finally {
-                                    // Always clear the pending operations and timer
-                                    pendingTagOperations.clear();
-                                    tagDebounceTimer = null;
-                                }
-                            }, 1000); // 1 second delay
-                        }
-                    });
-                }
-            })
-        );
-    }
-
-    /**
-     * Link keywords in the currently active note
-     * @param {boolean} preview - If true, show preview modal instead of applying changes
-     */
-    async linkKeywordsInCurrentNote(preview = false) {
-        // Get the currently open file
-        const activeFile = this.app.workspace.getActiveFile();
-        
-        // If no file is open, show error and return
-        if (!activeFile) {
-            new Notice('No active file');
-            return;
-        }
-        
-        // Process the file and get results
-        const results = await this.linkKeywordsInFile(activeFile, preview);
-        
-        // If preview mode and we have results, show preview modal
-        if (preview && results) {
-            new PreviewModal(this.app, results, activeFile.basename).open();
-        } 
-        // If not preview mode and changes were made, show success message
-        else if (!preview && results && results.changed) {
-            new Notice(`Linked ${results.linkCount} keyword(s) in current note!`);
-
-            // Update statistics
-            this.settings.statistics.totalLinksCreated += results.linkCount;
-            this.settings.statistics.totalNotesProcessed += 1;
-            this.settings.statistics.lastRunDate = new Date().toISOString();
-            await this.saveSettings();
-
-            // Update status bar to reflect new suggestions
-            setTimeout(() => this.updateStatusBar(), 100);
-        } 
-        // If not preview mode and no changes were made, inform user
-        else if (!preview) {
-            new Notice('No keywords found to link');
-        }
-    }
-
-    /**
-     * Link keywords in all notes in the vault
-     * @param {boolean} preview - If true, show preview modal instead of applying changes
-     */
-    async linkKeywordsInAllNotes(preview = false) {
-        // Get all markdown files in the vault
-        const files = this.app.vault.getMarkdownFiles();
-
-        // Initialize counters
-        let totalLinks = 0;        // Total number of links created
-        let filesModified = 0;     // Number of files that were changed
-        let previewResults = [];   // Array to store preview results
-
-        // Process each file - note we're NOT using skipTags, so tags will be added immediately
-        for (let file of files) {
-            // CRITICAL FIX: Skip non-markdown files (attachments, etc.)
-            if (file.extension !== 'md') {
-                continue;
-            }
-
-            const results = await this.linkKeywordsInFile(file, preview);
-
-            // If changes were made to this file
-            if (results && results.changed) {
-                filesModified++;
-                totalLinks += results.linkCount;
-
-                // If in preview mode, store results for the preview modal
-                if (preview) {
-                    previewResults.push({
-                        file: file,  // Include the file object for later processing
-                        fileName: file.basename,
-                        ...results
-                    });
-                }
-            }
-        }
-
-        // Update statistics if not preview mode
-        if (!preview && filesModified > 0) {
-            this.settings.statistics.totalLinksCreated += totalLinks;
-            this.settings.statistics.totalNotesProcessed += filesModified;
-            this.settings.statistics.lastRunDate = new Date().toISOString();
-            await this.saveSettings();
-        }
-
-        // If preview mode and we have results, show bulk preview modal
-        if (preview && previewResults.length > 0) {
-            new BulkPreviewModal(this.app, previewResults, this).open();
-        }
-        // If preview mode but no results, inform user
-        else if (preview) {
-            new Notice('No keywords found to link in any notes');
-        }
-        // If not preview mode, show summary of changes
-        else {
-            new Notice(`Linked ${totalLinks} keyword(s) in ${filesModified} note(s)!`);
-        }
-    }
-
-    /**
-     * Process a single file and link keywords
-     * @param {TFile} file - The file to process
-     * @param {boolean} preview - If true, don't modify file, just return what would change
-     * @param {boolean} skipTags - If true, don't add tags immediately, return them for later processing
-     * @returns {Object|null} Results object with change information, or null if no changes
-     */
-    async linkKeywordsInFile(file, preview = false, skipTags = false) {
-        // SAFETY CHECK: Ensure we only process markdown files
-        if (file.extension !== 'md') {
-            return null;
-        }
-        
-        // Check if this file is currently open in an editor
-        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-        const isActiveFile = activeView && activeView.file.path === file.path;
-        const editor = isActiveFile ? activeView.editor : null;
-        
-        // Save cursor position if file is active
-        let savedCursor = null;
-        if (editor && !preview) {
-            savedCursor = editor.getCursor();
-        }
-        
-        // Read the file content
-        let content = await this.app.vault.read(file);
-        const originalContent = content;  // Store original for comparison
-        const originalLength = content.length;
-        
-        // CRITICAL: Get frontmatter boundaries to skip that section
-        const frontmatterBounds = this.getFrontmatterBounds(content);
-        
-        // Initialize tracking variables
-        let linkCount = 0;
-        let changes = [];
-        let tagsToAdd = new Set(); // Track tags to add to this file
-        let targetNotesForTags = new Map(); // Map of target note -> tag name
-        
-        // Build a map of all keywords to their target notes
-        const keywordMap = this.buildKeywordMap();
-        
-        // Sort keywords by length (longest first)
-        const sortedKeywords = Object.keys(keywordMap).sort((a, b) => b.length - a.length);
-        
-        // Track found keywords for firstOccurrenceOnly mode
-        const foundKeywords = new Set();
-        
-        // Track all replacements made (for cursor position adjustment)
-        const allReplacements = [];
-        
-        // Process each keyword
-        for (let keyword of sortedKeywords) {
-            const target = keywordMap[keyword].target;
-            const enableTags = keywordMap[keyword].enableTags;
-            const linkScope = keywordMap[keyword].linkScope || 'vault-wide';
-            const scopeFolder = keywordMap[keyword].scopeFolder || '';
-            const useRelativeLinks = keywordMap[keyword].useRelativeLinks || false;
-            const blockRef = keywordMap[keyword].blockRef || '';
-            const requireTag = keywordMap[keyword].requireTag || '';
-            const onlyInNotesLinkingTo = keywordMap[keyword].onlyInNotesLinkingTo || false;
-            const suggestMode = keywordMap[keyword].suggestMode || false;
-            const preventSelfLink = keywordMap[keyword].preventSelfLink || false;
-            const keywordIndex = keywordMap[keyword].keywordIndex;
-
-            // Skip empty keywords or targets
-            if (!keyword.trim() || !target || !target.trim()) continue;
-
-            // Check self-link protection - skip if we're on the target note itself
-            // Use global setting OR per-keyword setting
-            if (this.settings.preventSelfLinkGlobal || preventSelfLink) {
-                // Get file basename without extension and normalize
-                const currentFileBase = file.basename;
-                // Compare with target (which may or may not have path)
-                const targetBase = target.split('/').pop(); // Get just the filename from path
-                if (currentFileBase === targetBase) {
-                    continue; // Skip this keyword on its own target note
-                }
-            }
-
-            // Check if we should only link in notes that already link to target
-            if (onlyInNotesLinkingTo && !this.noteHasLinkToTarget(file, target)) {
-                continue;
-            }
-
-            // Check if target note has required tag - skip this keyword if tag requirement not met
-            if (!this.noteHasTag(target, requireTag)) {
-                continue;
-            }
-
-            // Check link scope - skip this keyword if scope conditions aren't met
-            if (!this.checkLinkScope(file, target, linkScope, scopeFolder)) {
-                continue;
-            }
-
-            // If auto-create is enabled, ensure the target note exists
-            if (this.settings.autoCreateNotes) {
-                await this.ensureNoteExists(target);
-            }
-            
-            const flags = this.settings.caseSensitive ? 'g' : 'gi';
-            const escapedKeyword = this.escapeRegex(keyword);
-            const pattern = new RegExp(`\\b${escapedKeyword}\\b`, flags);
-            
-            let match;
-            const replacements = [];
-            let keywordFoundInThisFile = false;
-            
-            // Find all potential matches
-            while ((match = pattern.exec(content)) !== null) {
-                const matchIndex = match.index;
-                const matchText = match[0];
-                
-                // CRITICAL: Skip if inside frontmatter
-                if (frontmatterBounds && matchIndex >= frontmatterBounds.start && matchIndex < frontmatterBounds.end) {
-                    continue;
-                }
-                
-                // CRITICAL FIX: Skip if preceded by # (hashtag)
-                if (matchIndex > 0 && content[matchIndex - 1] === '#') {
-                    continue;
-                }
-
-                // CRITICAL FIX: Skip if inside a block reference (^block-id)
-                if (this.isInsideBlockReference(content, matchIndex)) {
-                    continue;
-                }
-
-                // Check if this match is inside a link or code block
-                if (this.isInsideLinkOrCode(content, matchIndex)) {
-                    continue;
-                }
-                
-                // Check if this match is inside an alias portion of a link
-                if (this.isInsideAlias(content, matchIndex)) {
-                    continue;
-                }
-                
-                // Check if this match is part of a URL
-                if (this.isPartOfUrl(content, matchIndex, matchText.length)) {
-                    continue;
-                }
-
-                // Note: We DO allow linking inside tables - Obsidian supports wikilinks in tables
-
-                // For firstOccurrenceOnly, skip if we already found this keyword
-                if (this.settings.firstOccurrenceOnly) {
-                    const keyLower = keyword.toLowerCase();
-
-                    // Check if we already found this keyword in THIS execution
-                    if (foundKeywords.has(keyLower)) {
-                        break;  // Stop looking for this keyword
-                    }
-
-                    // Also check if the keyword is already linked or suggested in the document content
-                    // This handles cases where the keyword was linked/suggested in a previous execution
-                    const existingLinkPattern = this.settings.caseSensitive
-                        ? new RegExp(`\\[\\[([^\\]]+\\|)?${this.escapeRegex(keyword)}\\]\\]`)
-                        : new RegExp(`\\[\\[([^\\]]+\\|)?${this.escapeRegex(keyword)}\\]\\]`, 'i');
-
-                    const existingSuggestPattern = this.settings.caseSensitive
-                        ? new RegExp(`<span class="akl-suggested-link"[^>]*>${this.escapeRegex(keyword)}</span>`)
-                        : new RegExp(`<span class="akl-suggested-link"[^>]*>${this.escapeRegex(keyword)}</span>`, 'i');
-
-                    if (existingLinkPattern.test(content) || existingSuggestPattern.test(content)) {
-                        break;  // Already linked or suggested in document, skip this keyword entirely
-                    }
-
-                    foundKeywords.add(keyLower);
-                }
-
-                // Check if we're inside a table
-                const insideTable = this.isInsideTable(content, matchIndex);
-
-                // Prepare target with optional block reference
-                const targetWithBlock = blockRef ? `${target}#${blockRef}` : target;
-
-                // Create replacement link or suggestion
-                let replacement;
-                if (suggestMode) {
-                    // Suggest mode: create HTML span instead of actual link
-                    const escapedTarget = target.replace(/"/g, '&quot;');
-                    const escapedBlock = blockRef.replace(/"/g, '&quot;');
-                    const useRelative = useRelativeLinks ? 'true' : 'false';
-                    replacement = `<span class="akl-suggested-link" data-target="${escapedTarget}" data-block="${escapedBlock}" data-use-relative="${useRelative}" data-keyword-index="${keywordIndex}">${matchText}</span>`;
-                } else if (useRelativeLinks) {
-                    // Use relative markdown link format: [text](Target%20Note.md#^block-id)
-                    // Escape pipe characters in the display text if inside a table to prevent breaking table columns
-                    const escapedMatchText = insideTable ? matchText.replace(/\|/g, '\\|') : matchText;
-                    const encodedTarget = encodeURIComponent(target) + '.md';
-                    const blockPart = blockRef ? `#${blockRef}` : '';
-                    replacement = `[${escapedMatchText}](${encodedTarget}${blockPart})`;
-                } else {
-                    // Use wikilink format: [[target#^block-id|matchText]]
-                    if (insideTable) {
-                        // Inside tables: Escape the pipe with single backslash \| to prevent breaking table formatting
-                        replacement = target === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}\\|${matchText}]]`;
-                    } else {
-                        // Outside table: standard wikilink format with | separator for alias
-                        replacement = target === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
-                    }
-                }
-                
-                // Store this replacement
-                replacements.push({
-                    index: matchIndex,
-                    length: matchText.length,
-                    original: matchText,
-                    replacement: replacement,
-                    lengthDiff: replacement.length - matchText.length
-                });
-                
-                // Store change for preview
-                changes.push({
-                    keyword: matchText,
-                    target: target,
-                    context: this.getContext(content, matchIndex)
-                });
-                
-                keywordFoundInThisFile = true;
-                
-                if (this.settings.firstOccurrenceOnly) {
-                    break;  // Only find first occurrence
-                }
-            }
-            
-            // If keyword was found and tags are enabled, prepare to add tags
-            if (keywordFoundInThisFile && enableTags) {
-                const tagName = this.sanitizeTagName(keyword);
-                tagsToAdd.add(tagName);
-
-                // Only add to target notes if it's not the current file (avoid duplicate when editing target note itself)
-                if (target !== file.basename) {
-                    targetNotesForTags.set(target, tagName);
-                }
-            }
-            
-            // Apply replacements in reverse order to preserve indices
-            for (let i = replacements.length - 1; i >= 0; i--) {
-                const r = replacements[i];
-                content = content.substring(0, r.index) + 
-                         r.replacement + 
-                         content.substring(r.index + r.length);
-                linkCount++;
-            }
-            
-            // Store replacements in forward order for cursor adjustment
-            for (let i = 0; i < replacements.length; i++) {
-                allReplacements.push({
-                    index: replacements[i].index,
-                    lengthDiff: replacements[i].lengthDiff
-                });
-            }
-        }
-        
-        // Sort all replacements by their original index position
-        allReplacements.sort((a, b) => a.index - b.index);
-
-        // Add tags to current file if any (unless skipTags is true)
-        if (tagsToAdd.size > 0 && !preview && !skipTags) {
-            content = await this.addTagsToContent(content, Array.from(tagsToAdd));
-        }
-
-        // Check if content changed
-        const changed = content !== originalContent;
-
-        // Save if not preview mode
-        if (!preview && changed) {
-            if (editor && savedCursor) {
-                // Get the current content from the editor (may have changed since we started)
-                const currentEditorContent = editor.getValue();
-
-                // If the editor content has changed from what we read, don't apply changes
-                // This prevents overwriting content the user is actively typing
-                if (currentEditorContent !== originalContent) {
-                    return null;
-                }
-
-                // Calculate cursor position in original content as character offset
-                const lines = originalContent.split('\n');
-                let cursorOffset = 0;
-                for (let i = 0; i < savedCursor.line && i < lines.length; i++) {
-                    cursorOffset += lines[i].length + 1; // +1 for newline
-                }
-                cursorOffset += savedCursor.ch;
-
-                // Calculate adjustment needed for cursor position
-                // We need to account for ALL replacements that happened before the cursor
-                // Replacements are sorted by original index position
-                let cursorAdjustment = 0;
-                for (const replacement of allReplacements) {
-                    // Check if replacement starts before the original cursor position
-                    if (replacement.index < cursorOffset) {
-                        cursorAdjustment += replacement.lengthDiff;
-                    }
-                }
-
-                // Calculate new cursor position in the content with keyword replacements
-                let newCursorOffset = cursorOffset + cursorAdjustment;
-
-                // Account for tag additions if cursor is at/near end
-                const wasCursorNearEnd = cursorOffset >= originalLength - 10;
-
-                // Replace entire content using editor
-                editor.setValue(content);
-
-                // If cursor was near the end and tags were added, keep it before the tags
-                if (tagsToAdd.size > 0 && wasCursorNearEnd) {
-                    // Find the last line with actual content (before tags)
-                    const newLines = content.split('\n');
-                    let lastContentLine = -1;
-
-                    for (let i = newLines.length - 1; i >= 0; i--) {
-                        const line = newLines[i].trim();
-                        // Skip empty lines and tag lines
-                        if (line !== '' && !line.match(/^#[\w\-]+(\s+#[\w\-]+)*$/)) {
-                            lastContentLine = i;
-                            break;
-                        }
-                    }
-
-                    if (lastContentLine >= 0) {
-                        // Place cursor at end of last content line
-                        editor.setCursor({
-                            line: lastContentLine,
-                            ch: newLines[lastContentLine].length
-                        });
-                    } else {
-                        // Fallback: place at start of document
-                        editor.setCursor({ line: 0, ch: 0 });
-                    }
-                } else {
-                    // Convert offset back to line/ch for normal cursor restoration
-                    const newLines = content.split('\n');
-                    let remainingOffset = newCursorOffset;
-                    let newLine = 0;
-                    let newCh = 0;
-
-                    for (let i = 0; i < newLines.length; i++) {
-                        if (remainingOffset <= newLines[i].length) {
-                            newLine = i;
-                            newCh = remainingOffset;
-                            break;
-                        }
-                        remainingOffset -= newLines[i].length + 1; // +1 for newline
-                    }
-
-                    // Restore adjusted cursor position
-                    editor.setCursor({ line: newLine, ch: newCh });
-                }
-            } else {
-                // File not open in editor, use vault.modify
-                await this.app.vault.modify(file, content);
-            }
-
-            // Add tags to target notes as well (unless skipTags is true)
-            if (!skipTags) {
-                for (const [targetNoteName, tagName] of targetNotesForTags) {
-                    await this.addTagToTargetNote(targetNoteName, tagName);
-                }
-            }
-        }
-
-        // Return results
-        if (changed) {
-            const result = {
-                changed: true,
-                linkCount: linkCount,
-                changes: changes,
-                preview: preview ? content : null
-            };
-
-            // If skipTags is true and there are tags to add, include them in the result
-            if (skipTags && (tagsToAdd.size > 0 || targetNotesForTags.size > 0)) {
-                result.pendingTags = {
-                    tagsToAdd: Array.from(tagsToAdd),
-                    targetNotesForTags: targetNotesForTags
-                };
-            }
-
-            return result;
-        }
-
-        return null;
-    }
-
-    /**
-     * Add tags to a file and its target notes (called after debounce)
-     * @param {TFile} file - The file to add tags to
-     * @param {Array} tagsToAdd - Array of tag names to add to the current file
-     * @param {Map} targetNotesForTags - Map of target note names to tag names
-     */
-    async addTagsToFile(file, tagsToAdd, targetNotesForTags) {
-        // Add tags to the current file
-        if (tagsToAdd && tagsToAdd.length > 0) {
-            // Check if this file is currently open in an editor
-            const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-            const isActiveFile = activeView && activeView.file.path === file.path;
-            const editor = isActiveFile ? activeView.editor : null;
-
-            if (editor) {
-                // Use editor to avoid "modified externally" warning
-                // Read current editor content (which may have changed since we queued tags)
-                const currentContent = editor.getValue();
-
-                // Check if tags already exist in the current content
-                const tagsAlreadyExist = tagsToAdd.every(tag => {
-                    const tagRegex = new RegExp(`#${tag}\\b`);
-                    return tagRegex.test(currentContent);
-                });
-
-                if (tagsAlreadyExist) {
-                    // Tags already present, nothing to do
-                    return;
-                }
-
-                // Determine what to append
-                const existingTagsMatch = currentContent.match(/\n\n((?:#[\w\-]+\s*)+)$/);
-                const existingTags = existingTagsMatch ?
-                    existingTagsMatch[1].match(/#[\w\-]+/g).map(t => t.substring(1)) :
-                    [];
-
-                // Filter out tags that already exist
-                const newTags = tagsToAdd.filter(tag => !existingTags.includes(tag));
-
-                if (newTags.length === 0) {
-                    return; // No new tags to add
-                }
-
-                // Format tags with #
-                const tagString = newTags.map(tag => `#${tag}`).join(' ');
-
-                // Use replaceRange to append tags at the end (safer than setValue)
-                const lastLine = editor.lastLine();
-                const lastLineLength = editor.getLine(lastLine).length;
-
-                if (existingTags.length > 0) {
-                    // Find the existing tag line by searching from the end
-                    for (let i = lastLine; i >= Math.max(0, lastLine - 10); i--) {
-                        const lineContent = editor.getLine(i);
-                        if (lineContent.trim().match(/^#[\w\-]+(\s+#[\w\-]+)*$/)) {
-                            // Found existing tag line, append to it
-                            editor.replaceRange(` ${tagString}`, {line: i, ch: lineContent.length});
-                            break;
-                        }
-                    }
-                } else {
-                    // Add new tag section at the end
-                    editor.replaceRange(`\n\n${tagString}`, {line: lastLine, ch: lastLineLength});
-                }
-            } else {
-                // File not open, use vault.modify
-                let content = await this.app.vault.read(file);
-                content = await this.addTagsToContent(content, tagsToAdd);
-                await this.app.vault.modify(file, content);
-            }
-        }
-
-        // Add tags to target notes
-        if (targetNotesForTags && targetNotesForTags.size > 0) {
-            for (const [targetNoteName, tagName] of targetNotesForTags) {
-                await this.addTagToTargetNote(targetNoteName, tagName);
-            }
-        }
-    }
-
-    /**
-     * Sanitize keyword into a valid tag name
-     * Converts spaces to hyphens and removes invalid characters
-     * @param {string} keyword - The keyword to convert
-     * @returns {string} Sanitized tag name
-     */
-    sanitizeTagName(keyword) {
-        return keyword
-            .replace(/\s+/g, '-')  // Replace spaces with hyphens
-            .replace(/[^\w\-]/g, '') // Remove invalid characters
-            .toLowerCase();
-    }
-
-    /**
-     * Add tags to the end of content
-     * @param {string} content - The file content
-     * @param {Array} tags - Array of tag names (without #)
-     * @returns {string} Content with tags added
-     */
-    async addTagsToContent(content, tags) {
-        // Check which tags already exist at the end of the document
-        const existingTagsMatch = content.match(/\n\n((?:#[\w\-]+\s*)+)$/);
-        const existingTags = existingTagsMatch ? 
-            existingTagsMatch[1].match(/#[\w\-]+/g).map(t => t.substring(1)) : 
-            [];
-        
-        // Filter out tags that already exist
-        const newTags = tags.filter(tag => !existingTags.includes(tag));
-        
-        if (newTags.length === 0) {
-            return content; // No new tags to add
-        }
-        
-        // Format tags with #
-        const tagString = newTags.map(tag => `#${tag}`).join(' ');
-        
-        // Add tags to the end
-        if (existingTags.length > 0) {
-            // Append to existing tags
-            content = content.replace(/\n\n((?:#[\w\-]+\s*)+)$/, `\n\n$1 ${tagString}`);
-        } else {
-            // Add new tag section
-            content = content.trimEnd() + `\n\n${tagString}`;
-        }
-        
-        return content;
-    }
-
-    /**
-     * Add a tag to a target note
-     * @param {string} noteName - Name of the target note
-     * @param {string} tagName - Tag to add (without #)
-     */
-    async addTagToTargetNote(noteName, tagName) {
-        // Find the target note
-        const files = this.app.vault.getMarkdownFiles();
-        const targetFile = files.find(f => f.basename === noteName);
-        
-        if (!targetFile) {
-            return; // Note doesn't exist
-        }
-        
-        // Read the file
-        let content = await this.app.vault.read(targetFile);
-        
-        // Check if tag already exists anywhere in the file
-        const tagRegex = new RegExp(`#${tagName}\\b`);
-        if (tagRegex.test(content)) {
-            return; // Tag already exists
-        }
-        
-        // Add the tag to the end
-        content = await this.addTagsToContent(content, [tagName]);
-        
-        // Save the file
-        await this.app.vault.modify(targetFile, content);
-    }
-
-    /**
-     * Get the start and end positions of YAML frontmatter
-     * @param {string} content - The full content
-     * @returns {Object|null} Object with start and end positions, or null if no frontmatter
-     */
-    getFrontmatterBounds(content) {
-        // Frontmatter must start at the very beginning of the file with ---
-        if (!content.startsWith('---')) {
-            return null;
-        }
-        
-        // Find the closing ---
-        const lines = content.split('\n');
-        let endLine = -1;
-        
-        // Start from line 1 (skip the opening ---)
-        for (let i = 1; i < lines.length; i++) {
-            if (lines[i].trim() === '---' || lines[i].trim() === '...') {
-                endLine = i;
-                break;
-            }
-        }
-        
-        // If we found a closing delimiter
-        if (endLine !== -1) {
-            // Calculate character positions
-            let endPos = 0;
-            for (let i = 0; i <= endLine; i++) {
-                endPos += lines[i].length + 1; // +1 for newline
-            }
-            
-            return {
-                start: 0,
-                end: endPos
-            };
-        }
-        
-        return null;
-    }
-
-    /**
-     * Check if a position is inside the alias portion of an Obsidian link
-     * Format: [[target|alias]] - we want to skip text in the alias part
-     * @param {string} content - The full content
-     * @param {number} index - Position to check
-     * @returns {boolean} True if inside alias portion of a link
-     */
-    isInsideAlias(content, index) {
-        // Look backwards to find [[ and check if there's a | between [[ and our position
-        let foundOpenBracket = false;
-        let foundPipe = false;
-        
-        // Search backwards from our position (up to 500 chars)
-        for (let i = index - 1; i >= Math.max(0, index - 500); i--) {
-            // If we find ]] going backwards, we're not in a link
-            if (i > 0 && content[i] === ']' && content[i - 1] === ']') {
-                return false;
-            }
-            
-            // If we find a pipe going backwards, mark it
-            if (content[i] === '|' && !foundPipe) {
-                foundPipe = true;
-            }
-            
-            // If we find [[ going backwards
-            if (i < content.length - 1 && content[i] === '[' && content[i + 1] === '[') {
-                foundOpenBracket = true;
-                break;
-            }
-            
-            // If we hit a newline, stop searching
-            if (content[i] === '\n') {
-                return false;
-            }
-        }
-        
-        // If we found [[ and a | between [[ and our position, check if ]] is ahead
-        if (foundOpenBracket && foundPipe) {
-            // Look forward to confirm there's a ]] ahead
-            for (let i = index; i < Math.min(content.length, index + 500); i++) {
-                if (i < content.length - 1 && content[i] === ']' && content[i + 1] === ']') {
-                    // We're inside [[...|alias]] structure
-                    return true;
-                }
-                if (content[i] === '\n') {
-                    break;
-                }
-            }
-        }
-        
-        return false;
-    }
-
-    /**
-     * Check if a position is part of a URL
-     * Detects various URL formats including protocol-based and domain-only URLs
-     * @param {string} content - The full content
-     * @param {number} index - Position to check
-     * @param {number} length - Length of the matched text
-     * @returns {boolean} True if part of a URL
-     */
-    isPartOfUrl(content, index, length) {
-        // Get surrounding context (500 chars before and after)
-        const contextStart = Math.max(0, index - 500);
-        const contextEnd = Math.min(content.length, index + length + 500);
-        const contextBefore = content.substring(contextStart, index);
-        const contextAfter = content.substring(index + length, contextEnd);
-        const matchText = content.substring(index, index + length);
-        const fullContext = contextBefore + matchText + contextAfter;
-        
-        // Calculate position in context
-        const posInContext = index - contextStart;
-        
-        // Pattern 1: Check for protocol-based URLs (http://, https://, ftp://, etc.)
-        const protocolPattern = /(?:https?|ftp|ftps|sftp|file):\/\/[^\s\]]+/gi;
-        let match;
-        while ((match = protocolPattern.exec(fullContext)) !== null) {
-            const matchStart = match.index;
-            const matchEnd = match.index + match[0].length;
-            // Check if our position is within this URL
-            if (posInContext >= matchStart && posInContext < matchEnd) {
-                return true;
-            }
-        }
-        
-        // Pattern 2: Check for www. URLs
-        const wwwPattern = /\bwww\.[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+[^\s\])"]*/gi;
-        while ((match = wwwPattern.exec(fullContext)) !== null) {
-            const matchStart = match.index;
-            const matchEnd = match.index + match[0].length;
-            if (posInContext >= matchStart && posInContext < matchEnd) {
-                return true;
-            }
-        }
-        
-        // Pattern 3: Check for domain.tld pattern (more conservative)
-        // Common TLDs including country codes
-        const domainPattern = /\b[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.(com|org|net|edu|gov|mil|int|info|biz|name|museum|coop|aero|asia|cat|jobs|mobi|travel|xxx|pro|tel|post|co\.uk|co\.jp|co\.kr|co\.nz|co\.au|co\.za|co\.in|co\.id|co\.th|co\.il|ac\.uk|gov\.uk|org\.uk|de|fr|it|es|nl|be|ch|at|se|no|dk|fi|ie|pl|cz|hu|ro|bg|gr|pt|ru|ua|sk|si|hr|lt|lv|ee|cn|jp|kr|tw|hk|sg|my|th|vn|id|ph|in|pk|bd|lk|np|af|au|nz|fj|ca|mx|br|ar|cl|co|pe|ve|ec|uy|py|bo|cr|pa|gt|hn|ni|sv|cu|do|jm|tt|bs|bb|za|eg|ng|ke|gh|tz|ug|zw|ma|dz|tn|sn|ci|cm|ao|mz|na|bw|mw|zm|rw|so|sd|et|ly|iq|ir|sa|ae|kw|qa|om|ye|jo|lb|sy|il|ps|tr|am|az|ge|kz|uz|tm|tj|kg|mn|io|ai|sh|tv|me|cc|ws|to|ly|gl|gd|ms|vg|ag|lc|vc|dm|kn|gp|mq|aw|cw|sx|bq|tc|ky|bm|pr|vi)(?:\b|\/|:|\?|#|$)/gi;
-        while ((match = domainPattern.exec(fullContext)) !== null) {
-            const matchStart = match.index;
-            const matchEnd = match.index + match[0].length;
-            if (posInContext >= matchStart && posInContext < matchEnd) {
-                // Additional check: make sure there's no letter immediately before (to avoid false positives)
-                if (matchStart === 0 || /[\s\(\[\{<"']/.test(fullContext[matchStart - 1])) {
-                    return true;
-                }
-            }
-        }
-        
-        // Pattern 4: Check if the matched text itself contains a domain pattern
-        const simpleTldPattern = /\.(com|org|net|edu|gov|io|ai|me|tv|co|uk|de|fr|it|jp|cn|au|ca|br|in|ru)\b/i;
-        if (simpleTldPattern.test(matchText)) {
-            return true;
-        }
-        
-        // Pattern 5: Look around the matched text for URL indicators
-        // Check 100 chars before and after for URL context
-        const localBefore = content.substring(Math.max(0, index - 100), index);
-        const localAfter = content.substring(index + length, Math.min(content.length, index + length + 100));
-        
-        // Check if there's a protocol or www before our match (without whitespace)
-        if (/(?:https?|ftp|ftps):\/\/[^\s]*$/.test(localBefore) || /www\.[^\s]*$/.test(localBefore)) {
-            return true;
-        }
-        
-        // Check if there's a TLD pattern after our match (without whitespace in between)
-        if (/^\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?(?:\/|\?|#|:|\s|$)/.test(localAfter)) {
-            return true;
-        }
-        
-        return false;
-    }
-
-    /**
-     * Check if a position in the content is inside a link or code block
-     * @param {string} content - The full content
-     * @param {number} index - Position to check
-     * @returns {boolean} True if inside link or code
-     */
-    isInsideLinkOrCode(content, index) {
-        // Look backwards to find if we're inside any kind of brackets
-        let bracketDepth = 0;
-        let insideBrackets = false;
-        
-        // Scan backwards from position
-        for (let i = index - 1; i >= Math.max(0, index - 500); i--) {
-            // Check for closing brackets ]]
-            if (i > 0 && content[i] === ']' && content[i - 1] === ']') {
-                bracketDepth--;
-                i--; // Skip both brackets
-                continue;
-            }
-            
-            // Check for opening brackets [[ or ![[
-            if (i < content.length - 1 && content[i] === '[' && content[i + 1] === '[') {
-                bracketDepth++;
-                // If we find an opening bracket and our depth is positive, we're inside
-                if (bracketDepth > 0) {
-                    insideBrackets = true;
-                    break;
-                }
-                i--; // Skip both brackets
-                continue;
-            }
-            
-            // If we hit a newline with depth 0, we're not in brackets
-            if (content[i] === '\n' && bracketDepth === 0) {
-                break;
-            }
-        }
-        
-        if (insideBrackets) {
-            return true;
-        }
-        
-        // Check if inside code block `...`
-        let backtickCount = 0;
-        for (let i = 0; i < index; i++) {
-            if (content[i] === '`') {
-                backtickCount++;
-            }
-        }
-        
-        // If odd number of backticks before our position, we're inside code
-        if (backtickCount % 2 === 1) {
-            return true;
-        }
-        
-        // Check if inside markdown link [text](url)
-        // First, check if we're inside the (url) part
-        let parenDepth = 0;
-        for (let i = index - 1; i >= Math.max(0, index - 300); i--) {
-            if (content[i] === ')') {
-                parenDepth--;
-            } else if (content[i] === '(') {
-                parenDepth++;
-                // If we find ( and depth > 0, check if it's preceded by ]
-                if (parenDepth > 0 && i > 0 && content[i - 1] === ']') {
-                    return true; // We're inside ](url) part of a markdown link
-                }
-            } else if (content[i] === '\n') {
-                break;
-            }
-        }
-
-        // Check if we're inside the [text] part
-        let squareBracketDepth = 0;
-        for (let i = index - 1; i >= Math.max(0, index - 300); i--) {
-            if (content[i] === ']') {
-                squareBracketDepth--;
-            } else if (content[i] === '[') {
-                squareBracketDepth++;
-                // If we find [ and depth > 0, we might be in a markdown link
-                if (squareBracketDepth > 0) {
-                    // Check if there's ]( ahead of our position
-                    for (let j = index; j < Math.min(content.length, index + 300); j++) {
-                        if (content[j] === ']' && j < content.length - 1 && content[j + 1] === '(') {
-                            return true;
-                        }
-                        if (content[j] === '\n') break;
-                    }
-                }
-            } else if (content[i] === '\n') {
-                break;
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Check if a position is inside a block reference (^block-id)
-     * Block references are in the format: ^some-block-id at the end of a line
-     * @param {string} content - The full content
-     * @param {number} index - Position to check
-     * @returns {boolean} True if inside a block reference
-     */
-    isInsideBlockReference(content, index) {
-        // Find the start of the current line
-        let lineStart = index;
-        while (lineStart > 0 && content[lineStart - 1] !== '\n') {
-            lineStart--;
-        }
-
-        // Find the end of the current line
-        let lineEnd = index;
-        while (lineEnd < content.length && content[lineEnd] !== '\n') {
-            lineEnd++;
-        }
-
-        // Get the current line
-        const line = content.substring(lineStart, lineEnd);
-
-        // Check if there's a ^ before our position on this line
-        const positionInLine = index - lineStart;
-
-        // Look for ^ character before the match position
-        const caretIndex = line.lastIndexOf('^', positionInLine);
-
-        if (caretIndex !== -1) {
-            // Check if there's only word characters, hyphens, and underscores between ^ and our position
-            // This matches the typical block ID format: ^block-id or ^block_id
-            const textBetween = line.substring(caretIndex, positionInLine + 1);
-
-            // If the text between ^ and our position only contains valid block ID characters
-            // then we're inside a block reference
-            if (/^\^[\w\-]*$/.test(textBetween)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Check if a position is inside a Markdown table
-     * Tables are defined by lines containing pipes (|) with a header separator line
-     * @param {string} content - The full content
-     * @param {number} index - Position to check
-     * @returns {boolean} True if inside a table
-     */
-    isInsideTable(content, index) {
-        // Find the current line
-        let lineStart = index;
-        while (lineStart > 0 && content[lineStart - 1] !== '\n') {
-            lineStart--;
-        }
-
-        let lineEnd = index;
-        while (lineEnd < content.length && content[lineEnd] !== '\n') {
-            lineEnd++;
-        }
-
-        const currentLine = content.substring(lineStart, lineEnd);
-
-        // Check if current line contains pipes (potential table row)
-        if (!currentLine.includes('|')) {
-            return false;
-        }
-
-        // Look backwards to find if there's a table separator line (like | --- | --- |)
-        // This confirms we're in a table
-        let searchStart = lineStart - 1;
-        const maxLookback = 10; // Look back up to 10 lines
-        let linesChecked = 0;
-
-        while (searchStart > 0 && linesChecked < maxLookback) {
-            // Find previous line start
-            let prevLineEnd = searchStart;
-            while (searchStart > 0 && content[searchStart - 1] !== '\n') {
-                searchStart--;
-            }
-
-            const prevLine = content.substring(searchStart, prevLineEnd).trim();
-
-            // Check if this line is a table separator (contains | and - and :)
-            // Examples: | --- | --- | or |:---|:---:| or |-----|-----|
-            if (prevLine.includes('|') && prevLine.includes('-')) {
-                // Simple check: if line has pipes and dashes, likely a separator
-                const withoutPipes = prevLine.replace(/\|/g, '');
-                const dashCount = (withoutPipes.match(/-/g) || []).length;
-
-                // If mostly dashes (table separator), we're in a table
-                if (dashCount >= 3) {
-                    return true;
-                }
-            }
-
-            // Also check forward from current position to find separator
-            linesChecked++;
-            searchStart--;
-        }
-
-        // Look forward as well (in case we're in the header row before separator)
-        let searchEnd = lineEnd + 1;
-        linesChecked = 0;
-
-        while (searchEnd < content.length && linesChecked < 3) {
-            let nextLineStart = searchEnd;
-            while (searchEnd < content.length && content[searchEnd] !== '\n') {
-                searchEnd++;
-            }
-
-            const nextLine = content.substring(nextLineStart, searchEnd).trim();
-
-            if (nextLine.includes('|') && nextLine.includes('-')) {
-                const withoutPipes = nextLine.replace(/\|/g, '');
-                const dashCount = (withoutPipes.match(/-/g) || []).length;
-
-                if (dashCount >= 3) {
-                    return true;
-                }
-            }
-
-            linesChecked++;
-            searchEnd++;
-        }
-
-        return false;
-    }
-
-    /**
-     * Get effective settings for a keyword by merging group settings with keyword-specific settings
-     * Keyword-specific settings override group settings
-     * @param {Object} keyword - The keyword object
-     * @returns {Object} Merged settings
-     */
-    getEffectiveKeywordSettings(keyword) {
-        // Start with defaults
-        const settings = {
-            enableTags: false,
-            linkScope: 'vault-wide',
-            scopeFolder: '',
-            useRelativeLinks: false,
-            blockRef: '',
-            requireTag: '',
-            onlyInNotesLinkingTo: false,
-            suggestMode: false,
-            preventSelfLink: false
-        };
-
-        // If keyword is in a group, apply group settings as base
-        if (keyword.groupId) {
-            const group = this.settings.keywordGroups.find(g => g.id === keyword.groupId);
-            if (group && group.settings) {
-                Object.assign(settings, group.settings);
-            }
-        }
-
-        // Override with keyword-specific settings only if explicitly set (not null/undefined)
-        // null means "inherit from group", so we skip those
-        if (keyword.enableTags !== null && keyword.enableTags !== undefined) settings.enableTags = keyword.enableTags;
-        if (keyword.linkScope !== null && keyword.linkScope !== undefined && keyword.linkScope !== 'vault-wide') settings.linkScope = keyword.linkScope;
-        if (keyword.scopeFolder !== null && keyword.scopeFolder !== undefined && keyword.scopeFolder !== '') settings.scopeFolder = keyword.scopeFolder;
-        if (keyword.useRelativeLinks !== null && keyword.useRelativeLinks !== undefined) settings.useRelativeLinks = keyword.useRelativeLinks;
-        if (keyword.blockRef !== null && keyword.blockRef !== undefined && keyword.blockRef !== '') settings.blockRef = keyword.blockRef;
-        if (keyword.requireTag !== null && keyword.requireTag !== undefined && keyword.requireTag !== '') settings.requireTag = keyword.requireTag;
-        if (keyword.onlyInNotesLinkingTo !== null && keyword.onlyInNotesLinkingTo !== undefined) settings.onlyInNotesLinkingTo = keyword.onlyInNotesLinkingTo;
-        if (keyword.suggestMode !== null && keyword.suggestMode !== undefined) settings.suggestMode = keyword.suggestMode;
-        if (keyword.preventSelfLink !== null && keyword.preventSelfLink !== undefined) settings.preventSelfLink = keyword.preventSelfLink;
-
-        return settings;
-    }
-
-    /**
-     * Build a map of all keywords (including variations) to their target notes and settings
-     * @returns {Object} Map where keys are keywords/variations and values are objects with target and enableTags
-     */
-    buildKeywordMap() {
-        const map = {};
-
-        // Iterate through all keyword entries in settings
-        for (let item of this.settings.keywords) {
-            // Skip items with empty keyword or target
-            if (!item.keyword || !item.keyword.trim() || !item.target || !item.target.trim()) {
-                continue;
-            }
-
-            // Get effective settings (merges group settings with keyword-specific settings)
-            const effectiveSettings = this.getEffectiveKeywordSettings(item);
-
-            // Add the main keyword with its settings
-            map[item.keyword] = {
-                target: item.target,
-                ...effectiveSettings,
-                keywordIndex: this.settings.keywords.indexOf(item)
-            };
-
-            // Add all manual variations, all pointing to the same target with same settings
-            if (item.variations && item.variations.length > 0) {
-                for (let variation of item.variations) {
-                    if (variation.trim()) {
-                        map[variation] = {
-                            target: item.target,
-                            ...effectiveSettings,
-                            keywordIndex: this.settings.keywords.indexOf(item)
-                        };
-                    }
-                }
-            }
-
-            // Auto-discover aliases from the target note's frontmatter
-            const aliases = this.getAliasesForNote(item.target);
-            if (aliases && aliases.length > 0) {
-                for (let alias of aliases) {
-                    if (alias.trim()) {
-                        // Add alias to keyword map (only if not already present)
-                        if (!map[alias]) {
-                            map[alias] = {
-                                target: item.target,
-                                ...effectiveSettings,
-                                keywordIndex: this.settings.keywords.indexOf(item)
-                            };
-                        }
-                    }
-                }
-            }
-        }
-
-        return map;
-    }
-
-    /**
-     * Check if a keyword should be linked based on its link scope settings
-     * @param {TFile} sourceFile - The file being processed (source)
-     * @param {string} targetNoteName - The target note name
-     * @param {string} linkScope - The link scope setting ('vault-wide', 'same-folder', 'source-folder', 'target-folder')
-     * @param {string} scopeFolder - The folder path for source-folder or target-folder scopes
-     * @returns {boolean} True if the keyword should be linked
-     */
-    checkLinkScope(sourceFile, targetNoteName, linkScope, scopeFolder) {
-        // Vault-wide: always link
-        if (linkScope === 'vault-wide') {
-            return true;
-        }
-
-        // Get source file's folder
-        const sourceFolder = sourceFile.parent ? sourceFile.parent.path : '';
-
-        // Same folder only: check if source and target are in the same folder
-        if (linkScope === 'same-folder') {
-            // Find the target file
-            const targetFile = this.findTargetFile(targetNoteName);
-            if (!targetFile) {
-                return false; // Target doesn't exist
-            }
-            const targetFolder = targetFile.parent ? targetFile.parent.path : '';
-            return sourceFolder === targetFolder;
-        }
-
-        // Source in folder: check if source file is in the specified folder
-        if (linkScope === 'source-folder') {
-            if (!scopeFolder) {
-                return true; // No folder specified, allow linking
-            }
-            // Normalize folder paths (remove leading/trailing slashes)
-            const normalizedScopeFolder = scopeFolder.replace(/^\/+|\/+$/g, '');
-            const normalizedSourceFolder = sourceFolder.replace(/^\/+|\/+$/g, '');
-
-            // Check if source is in the specified folder or a subfolder
-            return normalizedSourceFolder === normalizedScopeFolder ||
-                   normalizedSourceFolder.startsWith(normalizedScopeFolder + '/');
-        }
-
-        // Target in folder: check if target file is in the specified folder
-        if (linkScope === 'target-folder') {
-            if (!scopeFolder) {
-                return true; // No folder specified, allow linking
-            }
-            const targetFile = this.findTargetFile(targetNoteName);
-            if (!targetFile) {
-                return false; // Target doesn't exist
-            }
-            const targetFolder = targetFile.parent ? targetFile.parent.path : '';
-
-            // Normalize folder paths
-            const normalizedScopeFolder = scopeFolder.replace(/^\/+|\/+$/g, '');
-            const normalizedTargetFolder = targetFolder.replace(/^\/+|\/+$/g, '');
-
-            // Check if target is in the specified folder or a subfolder
-            return normalizedTargetFolder === normalizedScopeFolder ||
-                   normalizedTargetFolder.startsWith(normalizedScopeFolder + '/');
-        }
-
-        // Default: allow linking
-        return true;
-    }
-
-    /**
-     * Find a target file by name
-     * @param {string} noteName - Name of the note (with or without .md extension)
-     * @returns {TFile|null} The file object or null if not found
-     */
-    findTargetFile(noteName) {
-        const files = this.app.vault.getMarkdownFiles();
-        const noteBasename = noteName.endsWith('.md') ? noteName.slice(0, -3) : noteName;
-
-        for (let file of files) {
-            // Check if basename matches
-            if (file.basename.toLowerCase() === noteBasename.toLowerCase()) {
-                return file;
-            }
-            // Also check full path without extension (for notes in folders)
-            const pathWithoutExt = file.path.endsWith('.md') ? file.path.slice(0, -3) : file.path;
-            if (pathWithoutExt.toLowerCase() === noteBasename.toLowerCase()) {
-                return file;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Get aliases from a note's YAML frontmatter
-     * @param {string} noteName - Name of the note (with or without .md extension)
-     * @returns {Array<string>} Array of aliases, or empty array if none found
-     */
-    getAliasesForNote(noteName) {
-        try {
-            // Find the file - try with and without .md extension
-            const files = this.app.vault.getMarkdownFiles();
-            let targetFile = null;
-
-            // Remove .md extension if present for comparison
-            const noteBasename = noteName.endsWith('.md') ? noteName.slice(0, -3) : noteName;
-
-            for (let file of files) {
-                // Check if basename matches (case-insensitive for better matching)
-                if (file.basename.toLowerCase() === noteBasename.toLowerCase()) {
-                    targetFile = file;
-                    break;
-                }
-                // Also check full path without extension (for notes in folders)
-                const pathWithoutExt = file.path.endsWith('.md') ? file.path.slice(0, -3) : file.path;
-                if (pathWithoutExt.toLowerCase() === noteBasename.toLowerCase()) {
-                    targetFile = file;
-                    break;
-                }
-            }
-
-            // If file not found, return empty array
-            if (!targetFile) {
-                return [];
-            }
-
-            // Use Obsidian's metadataCache to get frontmatter (much faster than reading file)
-            const cache = this.app.metadataCache.getFileCache(targetFile);
-            if (!cache || !cache.frontmatter) {
-                return [];
-            }
-
-            // Extract aliases - could be 'aliases' or 'alias', could be array or string
-            const frontmatter = cache.frontmatter;
-            let aliases = [];
-
-            // Check for 'aliases' field (most common)
-            if (frontmatter.aliases) {
-                if (Array.isArray(frontmatter.aliases)) {
-                    aliases = aliases.concat(frontmatter.aliases);
-                } else if (typeof frontmatter.aliases === 'string') {
-                    aliases.push(frontmatter.aliases);
-                }
-            }
-
-            // Also check for 'alias' field (singular)
-            if (frontmatter.alias) {
-                if (Array.isArray(frontmatter.alias)) {
-                    aliases = aliases.concat(frontmatter.alias);
-                } else if (typeof frontmatter.alias === 'string') {
-                    aliases.push(frontmatter.alias);
-                }
-            }
-
-            // Filter out empty strings and return
-            return aliases.filter(a => a && typeof a === 'string' && a.trim());
-        } catch (error) {
-            console.error('Error getting aliases for note:', noteName, error);
-            return [];
-        }
-    }
-
-    /**
-     * Check if a note has a required tag (in frontmatter or inline)
-     * @param {string} noteName - Name of the note (with or without .md extension)
-     * @param {string} requiredTag - The tag to check for (without # prefix)
-     * @returns {boolean} True if note has the tag, false otherwise
-     */
-    noteHasTag(noteName, requiredTag) {
-        try {
-            // If no tag required, return true (no restriction)
-            if (!requiredTag || requiredTag.trim() === '') {
-                return true;
-            }
-
-            // Normalize the required tag (remove # if present)
-            const normalizedTag = requiredTag.trim().replace(/^#/, '').toLowerCase();
-
-            // Find the file - try with and without .md extension
-            let targetFile = null;
-            const files = this.app.vault.getMarkdownFiles();
-            const noteBasename = noteName.replace(/\.md$/, '');
-
-            for (let file of files) {
-                // Check if basename matches (case-insensitive for better matching)
-                if (file.basename.toLowerCase() === noteBasename.toLowerCase()) {
-                    targetFile = file;
-                    break;
-                }
-                // Also check full path without extension (for notes in folders)
-                const pathWithoutExt = file.path.endsWith('.md') ? file.path.slice(0, -3) : file.path;
-                if (pathWithoutExt.toLowerCase() === noteBasename.toLowerCase()) {
-                    targetFile = file;
-                    break;
-                }
-            }
-
-            // If file not found, return false (can't verify tag)
-            if (!targetFile) {
-                return false;
-            }
-
-            // Use Obsidian's metadataCache to get tags
-            const cache = this.app.metadataCache.getFileCache(targetFile);
-            if (!cache) {
-                return false;
-            }
-
-            // Check frontmatter tags
-            if (cache.frontmatter) {
-                const frontmatter = cache.frontmatter;
-                let frontmatterTags = [];
-
-                // Check for 'tags' field (most common)
-                if (frontmatter.tags) {
-                    if (Array.isArray(frontmatter.tags)) {
-                        frontmatterTags = frontmatter.tags;
-                    } else if (typeof frontmatter.tags === 'string') {
-                        frontmatterTags = [frontmatter.tags];
-                    }
-                }
-
-                // Check for 'tag' field (singular)
-                if (frontmatter.tag) {
-                    if (Array.isArray(frontmatter.tag)) {
-                        frontmatterTags = frontmatterTags.concat(frontmatter.tag);
-                    } else if (typeof frontmatter.tag === 'string') {
-                        frontmatterTags.push(frontmatter.tag);
-                    }
-                }
-
-                // Normalize and check frontmatter tags
-                for (let tag of frontmatterTags) {
-                    if (typeof tag === 'string') {
-                        const normalized = tag.replace(/^#/, '').toLowerCase();
-                        if (normalized === normalizedTag) {
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            // Check inline tags (from metadataCache)
-            if (cache.tags) {
-                for (let tagInfo of cache.tags) {
-                    // tagInfo.tag includes the # prefix
-                    const normalized = tagInfo.tag.replace(/^#/, '').toLowerCase();
-                    if (normalized === normalizedTag) {
-                        return true;
-                    }
-                }
-            }
-
-            // Tag not found
-            return false;
-        } catch (error) {
-            console.error('Error checking tag for note:', noteName, error);
-            return false;
-        }
-    }
-
-    /**
-     * Check if a note has an existing link to a target note
-     * @param {TFile} sourceFile - The source file to check
-     * @param {string} targetNoteName - The target note name to look for links to
-     * @returns {boolean} True if the source note has at least one link to the target note
-     */
-    noteHasLinkToTarget(sourceFile, targetNoteName) {
-        try {
-            // If no file provided, return false
-            if (!sourceFile) {
-                return false;
-            }
-
-            // Use Obsidian's metadataCache to get all links from the source file
-            const cache = this.app.metadataCache.getFileCache(sourceFile);
-            if (!cache || !cache.links || cache.links.length === 0) {
-                return false;
-            }
-
-            // Normalize target note name (remove .md extension if present)
-            const normalizedTarget = targetNoteName.replace(/\.md$/, '').toLowerCase();
-
-            // Check each link in the source file
-            for (let link of cache.links) {
-                // link.link is the raw link destination (e.g., "Languages/Python" or "Python")
-                const linkDest = link.link.toLowerCase();
-
-                // Direct match
-                if (linkDest === normalizedTarget) {
-                    return true;
-                }
-
-                // Check if link destination ends with the target (handles paths)
-                // e.g., link: "Languages/Python" matches target: "Python"
-                if (linkDest.endsWith('/' + normalizedTarget)) {
-                    return true;
-                }
-
-                // Check if target ends with the link (handles partial paths)
-                // e.g., link: "Python" matches target: "Languages/Python"
-                if (normalizedTarget.endsWith('/' + linkDest)) {
-                    return true;
-                }
-
-                // Try to resolve the link to an actual file and compare basenames
-                const linkedFile = this.app.metadataCache.getFirstLinkpathDest(link.link, sourceFile.path);
-                if (linkedFile) {
-                    const linkedBasename = linkedFile.basename.toLowerCase();
-                    const targetBasename = normalizedTarget.split('/').pop();
-
-                    if (linkedBasename === targetBasename) {
-                        return true;
-                    }
-                }
-            }
-
-            // No matching link found
-            return false;
-        } catch (error) {
-            console.error('Error checking links in note:', sourceFile.path, error);
-            return false;
-        }
-    }
-
-    /**
-     * Ensure a note exists, creating it if necessary
-     * @param {string} noteName - Name of the note to ensure exists
-     */
-    async ensureNoteExists(noteName) {
-        // FIXED: Search for existing note anywhere in vault first
-        const existingFiles = this.app.vault.getMarkdownFiles();
-        const existingFile = existingFiles.find(f => f.basename === noteName);
-        
-        // If file exists anywhere, we're done
-        if (existingFile) {
-            return;
-        }
-        
-        // File doesn't exist, so create it in the specified folder
-        const folder = this.settings.newNoteFolder || '';
-        const path = folder ? `${folder}/${noteName}.md` : `${noteName}.md`;
-        
-        // Start with the template
-        let content = this.settings.newNoteTemplate;
-        
-        // Replace template placeholders
-        content = content.replace(/{{keyword}}/g, noteName);  // Replace {{keyword}} with note name
-        content = content.replace(/{{date}}/g, new Date().toISOString().split('T')[0]);  // Replace {{date}} with today's date
-        
-        // Ensure the folder exists before creating the file
-        if (folder) {
-            const folderExists = this.app.vault.getAbstractFileByPath(folder);
-            if (!folderExists) {
-                await this.app.vault.createFolder(folder);
-            }
-        }
-        
-        // Create the new note
-        await this.app.vault.create(path, content);
-    }
-
-    /**
-     * Get surrounding context for a match (for preview display)
-     * @param {string} content - The full content
-     * @param {number} index - Position of the match
-     * @param {number} contextLength - Number of characters to show on each side
-     * @returns {string} Context string with ellipses
-     */
-    getContext(content, index, contextLength = 40) {
-        const start = Math.max(0, index - contextLength);
-        const end = Math.min(content.length, index + contextLength);
-        return '...' + content.substring(start, end) + '...';
-    }
-
-    /**
-     * Escape special regex characters in a string
-     * @param {string} string - String to escape
-     * @returns {string} Escaped string safe for use in regex
-     */
-    escapeRegex(string) {
-        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-
-    /**
-     * Generate a unique ID for keywords or groups
-     * @param {string} prefix - Prefix for the ID (e.g., 'kw' for keywords, 'grp' for groups)
-     * @returns {string} Unique ID
-     */
-    generateId(prefix = 'id') {
-        return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-    }
-
-    /**
-     * Load plugin settings from disk
-     */
-    async loadSettings() {
-        // Merge saved settings with defaults (in case new settings were added)
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-
-        // Ensure statistics object exists
-        if (!this.settings.statistics) {
-            this.settings.statistics = DEFAULT_SETTINGS.statistics;
-        }
-
-        // Ensure customStopWords exists and is an array
-        if (!this.settings.customStopWords || !Array.isArray(this.settings.customStopWords)) {
-            this.settings.customStopWords = DEFAULT_SETTINGS.customStopWords;
-        }
-
-        // Ensure keywordGroups array exists (migration for existing users)
-        if (!this.settings.keywordGroups) {
-            this.settings.keywordGroups = [];
-        }
-
-        // Ensure enableTags, linkScope, id, and groupId fields exist for all keywords
-        if (this.settings.keywords) {
-            for (let keyword of this.settings.keywords) {
-                // Add ID if missing (migration for existing keywords)
-                if (!keyword.id) {
-                    keyword.id = this.generateId('kw');
-                }
-                // Add groupId if missing (migration for existing keywords)
-                if (keyword.groupId === undefined) {
-                    keyword.groupId = null;
-                }
-                // Use null for boolean settings to allow group inheritance
-                // Only set to false if explicitly undefined (for migration)
-                if (keyword.enableTags === undefined) {
-                    keyword.enableTags = null;
-                }
-                // Convert false to null for keywords in groups to enable inheritance
-                if (keyword.groupId && keyword.enableTags === false) {
-                    keyword.enableTags = null;
-                }
-                if (keyword.linkScope === undefined) {
-                    keyword.linkScope = 'vault-wide';
-                }
-                if (keyword.scopeFolder === undefined) {
-                    keyword.scopeFolder = '';
-                }
-                if (keyword.requireTag === undefined) {
-                    keyword.requireTag = '';
-                }
-                if (keyword.onlyInNotesLinkingTo === undefined) {
-                    keyword.onlyInNotesLinkingTo = null;
-                }
-                if (keyword.groupId && keyword.onlyInNotesLinkingTo === false) {
-                    keyword.onlyInNotesLinkingTo = null;
-                }
-                if (keyword.suggestMode === undefined) {
-                    keyword.suggestMode = null;
-                }
-                if (keyword.groupId && keyword.suggestMode === false) {
-                    keyword.suggestMode = null;
-                }
-                if (keyword.preventSelfLink === undefined) {
-                    keyword.preventSelfLink = null;
-                }
-                if (keyword.groupId && keyword.preventSelfLink === false) {
-                    keyword.preventSelfLink = null;
-                }
-                if (keyword.useRelativeLinks === undefined) {
-                    keyword.useRelativeLinks = null;
-                }
-                if (keyword.groupId && keyword.useRelativeLinks === false) {
-                    keyword.useRelativeLinks = null;
-                }
-            }
-        }
-    }
-
-    /**
-     * Save plugin settings to disk
-     */
-    async saveSettings() {
-        this.isSaving = true;
-        await this.saveData(this.settings);
-        // Reset flag after a short delay to ensure the modify event has been processed
-        setTimeout(() => {
-            this.isSaving = false;
-        }, 100);
-    }
-
-    /**
-     * Add custom CSS styles for the improved UI
-     * This is called on plugin load to ensure styles are available for all modals
-     */
-    addCustomStyles() {
-        // Check if styles already exist
-        if (document.getElementById('akl-custom-styles')) {
-            return;
-        }
-
-        const styleEl = document.createElement('style');
-        styleEl.id = 'akl-custom-styles';
-        styleEl.textContent = `
+/*
+THIS IS A GENERATED FILE. DO NOT EDIT DIRECTLY.
+Edit files in src/ and run 'npm run build'
+*/
+
+var le=Object.defineProperty;var _t=Object.getOwnPropertyDescriptor;var Jt=Object.getOwnPropertyNames;var Qt=Object.prototype.hasOwnProperty;var ce=(a,e)=>()=>(a&&(e=a(a=0)),e);var D=(a,e)=>()=>(e||a((e={exports:{}}).exports,e),e.exports),de=(a,e)=>{for(var t in e)le(a,t,{get:e[t],enumerable:!0})},Yt=(a,e,t,o)=>{if(e&&typeof e=="object"||typeof e=="function")for(let s of Jt(e))!Qt.call(a,s)&&s!==t&&le(a,s,{get:()=>e[s],enumerable:!(o=_t(e,s))||o.enumerable});return a};var P=a=>Yt(le({},"__esModule",{value:!0}),a);var Ge={};de(Ge,{DEFAULT_SETTINGS:()=>O,DEFAULT_STOP_WORDS:()=>Xt});var Xt,O,ue=ce(()=>{Xt=["a","an","and","are","as","at","be","by","for","from","has","he","in","is","it","its","of","on","that","the","to","was","will","with","the","this","but","they","have","had","what","when","where","who","which","why","how","all","each","every","both","few","more","most","other","some","such","no","nor","not","only","own","same","so","than","too","very","can","will","just","should","now","my","me","we","us","our","your","their","his","her","i","you","do","does","did","am","been","being","get","got","if","or","may","could","would","should","might","must","one","two","three","four","five","six","seven","eight","nine","ten","there","then","these","those","also","any","about","after","again","before","because","between","during","through","under","over","above","below","up","down","out","off","into","since","until","while","once","here","there","see","saw","seen","go","goes","going","gone","went","want","wanted","make","made","use","used","using","day","days","way","ways","thing","things","yes","no","okay","ok"],O={keywordGroups:[],keywords:[{id:"kw-1",keyword:"Keyword1",target:"Keyword1",variations:[],enableTags:!1,linkScope:"vault-wide",scopeFolder:"",useRelativeLinks:!1,blockRef:"",requireTag:"",onlyInNotesLinkingTo:!1,suggestMode:!1,preventSelfLink:!1,groupId:null},{id:"kw-2",keyword:"Keyword2",target:"Keyword2",variations:[],enableTags:!1,linkScope:"vault-wide",scopeFolder:"",useRelativeLinks:!1,blockRef:"",requireTag:"",onlyInNotesLinkingTo:!1,suggestMode:!1,preventSelfLink:!1,groupId:null}],autoLinkOnSave:!1,caseSensitive:!1,firstOccurrenceOnly:!0,autoCreateNotes:!1,newNoteFolder:"",newNoteTemplate:`# {{keyword}}
+
+Created: {{date}}
+
+`,customStopWords:[],preventSelfLinkGlobal:!1,statistics:{totalLinksCreated:0,totalNotesProcessed:0,lastRunDate:null}}});var U={};de(U,{escapeCSV:()=>ss,escapeRegex:()=>es,generateId:()=>ge,getContext:()=>ts,parseCSVLine:()=>os});function ge(a="id"){return`${a}-${Date.now()}-${Math.random().toString(36).substring(2,11)}`}function es(a){return a.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}function ts(a,e,t=40){let o=Math.max(0,e-t),s=Math.min(a.length,e+t);return"..."+a.substring(o,s)+"..."}function ss(a){return typeof a!="string"?a:a.includes(",")||a.includes('"')||a.includes(`
+`)?`"${a.replace(/"/g,'""')}"`:a}function os(a){let e=[],t="",o=!1;for(let s=0;s<a.length;s++){let i=a[s],n=a[s+1];i==='"'&&o&&n==='"'?(t+='"',s++):i==='"'?o=!o:i===","&&!o?(e.push(t.trim()),t=""):t+=i}return e.push(t.trim()),e}var W=ce(()=>{});var je={};de(je,{loadSettings:()=>as,saveSettings:()=>ns,setupSettingsWatcher:()=>rs});async function as(a){let e=Object.assign({},O,await a.loadData());if(e.statistics||(e.statistics=O.statistics),(!e.customStopWords||!Array.isArray(e.customStopWords))&&(e.customStopWords=O.customStopWords),e.keywordGroups||(e.keywordGroups=[]),e.keywords)for(let t of e.keywords)t.id||(t.id=ge("kw")),t.groupId===void 0&&(t.groupId=null),t.enableTags===void 0&&(t.enableTags=null),t.groupId&&t.enableTags===!1&&(t.enableTags=null),t.linkScope===void 0&&(t.linkScope="vault-wide"),t.scopeFolder===void 0&&(t.scopeFolder=""),t.requireTag===void 0&&(t.requireTag=""),t.onlyInNotesLinkingTo===void 0&&(t.onlyInNotesLinkingTo=null),t.groupId&&t.onlyInNotesLinkingTo===!1&&(t.onlyInNotesLinkingTo=null),t.suggestMode===void 0&&(t.suggestMode=null),t.groupId&&t.suggestMode===!1&&(t.suggestMode=null),t.preventSelfLink===void 0&&(t.preventSelfLink=null),t.groupId&&t.preventSelfLink===!1&&(t.preventSelfLink=null),t.useRelativeLinks===void 0&&(t.useRelativeLinks=null),t.groupId&&t.useRelativeLinks===!1&&(t.useRelativeLinks=null);return e}async function ns(a,e){a.isSaving=!0,await a.saveData(e),setTimeout(()=>{a.isSaving=!1},100)}function rs(a){a.isSaving=!1;let e=JSON.stringify(a.settings.keywords);a.registerInterval(window.setInterval(async()=>{if(!a.isSaving)try{let t=await a.loadData();if(t&&t.keywords){let o=JSON.stringify(t.keywords);if(o!==e){if(console.log("Auto Keyword Linker: Settings changed externally, reloading..."),a.settings=Object.assign({},O,t),a.settings.statistics||(a.settings.statistics=O.statistics),(!a.settings.customStopWords||!Array.isArray(a.settings.customStopWords))&&(a.settings.customStopWords=O.customStopWords),a.settings.keywords)for(let s of a.settings.keywords)s.enableTags===void 0&&(s.enableTags=!1),s.linkScope===void 0&&(s.linkScope="vault-wide"),s.scopeFolder===void 0&&(s.scopeFolder=""),s.useRelativeLinks===void 0&&(s.useRelativeLinks=!1),s.blockRef===void 0&&(s.blockRef=""),s.requireTag===void 0&&(s.requireTag=""),s.onlyInNotesLinkingTo===void 0&&(s.onlyInNotesLinkingTo=!1);e=o}}}catch(t){console.log("Auto Keyword Linker: Error checking for settings changes:",t)}},15e3))}var He=ce(()=>{ue();W()});var re=D((La,Ue)=>{function is(a,e){try{let t=a.vault.getMarkdownFiles(),o=null,s=e.endsWith(".md")?e.slice(0,-3):e;for(let l of t){if(l.basename.toLowerCase()===s.toLowerCase()){o=l;break}if((l.path.endsWith(".md")?l.path.slice(0,-3):l.path).toLowerCase()===s.toLowerCase()){o=l;break}}if(!o)return[];let i=a.metadataCache.getFileCache(o);if(!i||!i.frontmatter)return[];let n=i.frontmatter,r=[];return n.aliases&&(Array.isArray(n.aliases)?r=r.concat(n.aliases):typeof n.aliases=="string"&&r.push(n.aliases)),n.alias&&(Array.isArray(n.alias)?r=r.concat(n.alias):typeof n.alias=="string"&&r.push(n.alias)),r.filter(l=>l&&typeof l=="string"&&l.trim())}catch(t){return console.error("Error getting aliases for note:",e,t),[]}}function ls(a,e,t){try{if(!t||t.trim()==="")return!0;let o=t.trim().replace(/^#/,"").toLowerCase(),s=null,i=a.vault.getMarkdownFiles(),n=e.replace(/\.md$/,"");for(let l of i){if(l.basename.toLowerCase()===n.toLowerCase()){s=l;break}if((l.path.endsWith(".md")?l.path.slice(0,-3):l.path).toLowerCase()===n.toLowerCase()){s=l;break}}if(!s)return!1;let r=a.metadataCache.getFileCache(s);if(!r)return!1;if(r.frontmatter){let l=r.frontmatter,c=[];l.tags&&(Array.isArray(l.tags)?c=l.tags:typeof l.tags=="string"&&(c=[l.tags])),l.tag&&(Array.isArray(l.tag)?c=c.concat(l.tag):typeof l.tag=="string"&&c.push(l.tag));for(let u of c)if(typeof u=="string"&&u.replace(/^#/,"").toLowerCase()===o)return!0}if(r.tags){for(let l of r.tags)if(l.tag.replace(/^#/,"").toLowerCase()===o)return!0}return!1}catch(o){return console.error("Error checking tag for note:",e,o),!1}}function cs(a,e,t){try{if(!e)return!1;let o=a.metadataCache.getFileCache(e);if(!o||!o.links||o.links.length===0)return!1;let s=t.replace(/\.md$/,"").toLowerCase();for(let i of o.links){let n=i.link.toLowerCase();if(n===s||n.endsWith("/"+s)||s.endsWith("/"+n))return!0;let r=a.metadataCache.getFirstLinkpathDest(i.link,e.path);if(r){let l=r.basename.toLowerCase(),c=s.split("/").pop();if(l===c)return!0}}return!1}catch(o){return console.error("Error checking links in note:",e.path,o),!1}}async function ds(a,e,t){if(a.vault.getMarkdownFiles().find(l=>l.basename===t))return;let i=e.newNoteFolder||"",n=i?`${i}/${t}.md`:`${t}.md`,r=e.newNoteTemplate;r=r.replace(/{{keyword}}/g,t),r=r.replace(/{{date}}/g,new Date().toISOString().split("T")[0]),i&&(a.vault.getAbstractFileByPath(i)||await a.vault.createFolder(i)),await a.vault.create(n,r)}function us(a,e){let t=a.vault.getMarkdownFiles(),o=e.endsWith(".md")?e.slice(0,-3):e;for(let s of t)if(s.basename.toLowerCase()===o.toLowerCase()||(s.path.endsWith(".md")?s.path.slice(0,-3):s.path).toLowerCase()===o.toLowerCase())return s;return null}Ue.exports={getAliasesForNote:is,noteHasTag:ls,noteHasLinkToTarget:cs,ensureNoteExists:ds,findTargetFile:us}});var pe=D((Ta,_e)=>{var{getAliasesForNote:gs}=re();function Ze(a,e){let t={enableTags:!1,linkScope:"vault-wide",scopeFolder:"",useRelativeLinks:!1,blockRef:"",requireTag:"",onlyInNotesLinkingTo:!1,suggestMode:!1,preventSelfLink:!1};if(e.groupId){let o=a.keywordGroups.find(s=>s.id===e.groupId);o&&o.settings&&Object.assign(t,o.settings)}return e.enableTags!==null&&e.enableTags!==void 0&&(t.enableTags=e.enableTags),e.linkScope!==null&&e.linkScope!==void 0&&e.linkScope!=="vault-wide"&&(t.linkScope=e.linkScope),e.scopeFolder!==null&&e.scopeFolder!==void 0&&e.scopeFolder!==""&&(t.scopeFolder=e.scopeFolder),e.useRelativeLinks!==null&&e.useRelativeLinks!==void 0&&(t.useRelativeLinks=e.useRelativeLinks),e.blockRef!==null&&e.blockRef!==void 0&&e.blockRef!==""&&(t.blockRef=e.blockRef),e.requireTag!==null&&e.requireTag!==void 0&&e.requireTag!==""&&(t.requireTag=e.requireTag),e.onlyInNotesLinkingTo!==null&&e.onlyInNotesLinkingTo!==void 0&&(t.onlyInNotesLinkingTo=e.onlyInNotesLinkingTo),e.suggestMode!==null&&e.suggestMode!==void 0&&(t.suggestMode=e.suggestMode),e.preventSelfLink!==null&&e.preventSelfLink!==void 0&&(t.preventSelfLink=e.preventSelfLink),t}function ps(a,e){let t={};for(let o of e.keywords){if(!o.keyword||!o.keyword.trim()||!o.target||!o.target.trim())continue;let s=Ze(e,o);if(t[o.keyword]={target:o.target,...s,keywordIndex:e.keywords.indexOf(o)},o.variations&&o.variations.length>0)for(let n of o.variations)n.trim()&&(t[n]={target:o.target,...s,keywordIndex:e.keywords.indexOf(o)});let i=gs(a,o.target);if(i&&i.length>0)for(let n of i)n.trim()&&(t[n]||(t[n]={target:o.target,...s,keywordIndex:e.keywords.indexOf(o)}))}return t}function hs(a,e,t,o,s,i){if(o==="vault-wide")return!0;let n=e.parent?e.parent.path:"";if(o==="same-folder"){let r=i(a,t);if(!r)return!1;let l=r.parent?r.parent.path:"";return n===l}if(o==="source-folder"){if(!s)return!0;let r=s.replace(/^\/+|\/+$/g,""),l=n.replace(/^\/+|\/+$/g,"");return l===r||l.startsWith(r+"/")}if(o==="target-folder"){if(!s)return!0;let r=i(a,t);if(!r)return!1;let l=r.parent?r.parent.path:"",c=s.replace(/^\/+|\/+$/g,""),u=l.replace(/^\/+|\/+$/g,"");return u===c||u.startsWith(c+"/")}return!0}_e.exports={getEffectiveKeywordSettings:Ze,buildKeywordMap:ps,checkLinkScope:hs}});var Qe=D((Ea,Je)=>{var{DEFAULT_STOP_WORDS:fs}=(ue(),P(Ge));function he(a){let e=new Set(fs);if(a.customStopWords&&Array.isArray(a.customStopWords))for(let t of a.customStopWords)t&&typeof t=="string"&&e.add(t.toLowerCase().trim());return e}function ee(a,e,t){let o=[],s=he(t),i=a.split(/[\s\-_\/\\,;:]+/);for(let n of i){let r=n.split(/(?=[A-Z])/).filter(l=>l.length>0);for(let l of r){let c=l.trim().replace(/[^\w\s]/g,"").trim();c.length!==0&&(c=c.charAt(0).toUpperCase()+c.slice(1).toLowerCase(),c.length>=3&&!s.has(c.toLowerCase())&&o.push(c))}}return o}function te(a,e){let t=[],o=he(e),s=a.split(/[.\n]/);for(let i of s){let n=i.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/g);if(n)for(let r of n)r=r.trim(),r.split(/\s+/).some(u=>!o.has(u.toLowerCase()))&&r.length>=5&&t.push(r)}return t}async function ks(a,e,t){let o=a.vault.getMarkdownFiles(),s=new Map,i=new Map,n=new Set(e.keywords.map(l=>l.keyword.toLowerCase()));for(let l of e.keywords)if(l.variations&&l.variations.length>0)for(let c of l.variations)n.add(c.toLowerCase());for(let l of e.keywords){let c=t(l.target);if(c&&c.length>0)for(let u of c)n.add(u.toLowerCase())}for(let l of o){let c=ee(l.basename,!0,e),u=te(l.basename,e);for(let d of c)if(!n.has(d.toLowerCase())){s.has(d)||s.set(d,{count:0,notes:new Set});let h=s.get(d);h.count+=3,h.notes.add(l.basename)}for(let d of u)if(!n.has(d.toLowerCase())){i.has(d)||i.set(d,{count:0,notes:new Set});let h=i.get(d);h.count+=3,h.notes.add(l.basename)}try{let f=(await a.vault.read(l)).substring(0,5e3).replace(/^---[\s\S]*?---\n/,"");f=f.replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g,""),f=f.replace(/\[([^\]]+)\]\([^)]+\)/g,"");let p=ee(f,!1,e),g=te(f,e);for(let k of p)if(!n.has(k.toLowerCase())){s.has(k)||s.set(k,{count:0,notes:new Set});let w=s.get(k);w.count+=1,w.notes.add(l.basename)}for(let k of g)if(!n.has(k.toLowerCase())){i.has(k)||i.set(k,{count:0,notes:new Set});let w=i.get(k);w.count+=1,w.notes.add(l.basename)}}catch(d){console.log(`Error reading ${l.path}:`,d)}}let r=[];for(let[l,c]of s)r.push({keyword:l,count:c.count,notes:Array.from(c.notes).slice(0,5),totalNotes:c.notes.size});for(let[l,c]of i)r.push({keyword:l,count:c.count,notes:Array.from(c.notes).slice(0,5),totalNotes:c.notes.size});return r.sort((l,c)=>c.count!==l.count?c.count-l.count:c.keyword.length-l.keyword.length),r}async function ms(a,e,t,o){let s=new Map,i=new Map,n=new Set(e.keywords.map(u=>u.keyword.toLowerCase()));for(let u of e.keywords)if(u.variations&&u.variations.length>0)for(let d of u.variations)n.add(d.toLowerCase());for(let u of e.keywords){let d=o(u.target);if(d&&d.length>0)for(let h of d)n.add(h.toLowerCase())}let r=ee(t.basename,!0,e),l=te(t.basename,e);for(let u of r)if(!n.has(u.toLowerCase())){s.has(u)||s.set(u,{count:0,notes:new Set});let d=s.get(u);d.count+=3,d.notes.add(t.basename)}for(let u of l)if(!n.has(u.toLowerCase())){i.has(u)||i.set(u,{count:0,notes:new Set});let d=i.get(u);d.count+=3,d.notes.add(t.basename)}try{let d=(await a.vault.read(t)).replace(/^---[\s\S]*?---\n/,"");d=d.replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g,""),d=d.replace(/\[([^\]]+)\]\([^)]+\)/g,"");let h=ee(d,!1,e),f=te(d,e);for(let p of h)if(!n.has(p.toLowerCase())){s.has(p)||s.set(p,{count:0,notes:new Set});let g=s.get(p);g.count+=1,g.notes.add(t.basename)}for(let p of f)if(!n.has(p.toLowerCase())){i.has(p)||i.set(p,{count:0,notes:new Set});let g=i.get(p);g.count+=1,g.notes.add(t.basename)}}catch(u){throw console.log(`Error reading ${t.path}:`,u),u}let c=[];for(let[u,d]of s)c.push({keyword:u,count:d.count,notes:Array.from(d.notes),totalNotes:d.notes.size});for(let[u,d]of i)c.push({keyword:u,count:d.count,notes:Array.from(d.notes),totalNotes:d.notes.size});return c.sort((u,d)=>d.count!==u.count?d.count-u.count:d.keyword.length-u.keyword.length),c}Je.exports={getStopWords:he,extractWordsFromText:ee,extractPhrasesFromText:te,analyzeNotesForKeywords:ks,analyzeCurrentNoteForKeywords:ms}});var fe=D((Aa,Ye)=>{function ws(a){if(!a.startsWith("---"))return null;let e=a.split(`
+`),t=-1;for(let o=1;o<e.length;o++)if(e[o].trim()==="---"||e[o].trim()==="..."){t=o;break}if(t!==-1){let o=0;for(let s=0;s<=t;s++)o+=e[s].length+1;return{start:0,end:o}}return null}function ys(a,e){let t=!1,o=!1;for(let s=e-1;s>=Math.max(0,e-500);s--){if(s>0&&a[s]==="]"&&a[s-1]==="]")return!1;if(a[s]==="|"&&!o&&(o=!0),s<a.length-1&&a[s]==="["&&a[s+1]==="["){t=!0;break}if(a[s]===`
+`)return!1}if(t&&o)for(let s=e;s<Math.min(a.length,e+500);s++){if(s<a.length-1&&a[s]==="]"&&a[s+1]==="]")return!0;if(a[s]===`
+`)break}return!1}function vs(a,e,t){let o=Math.max(0,e-500),s=Math.min(a.length,e+t+500),i=a.substring(o,e),n=a.substring(e+t,s),r=a.substring(e,e+t),l=i+r+n,c=e-o,u=/(?:https?|ftp|ftps|sftp|file):\/\/[^\s\]]+/gi,d;for(;(d=u.exec(l))!==null;){let w=d.index,L=d.index+d[0].length;if(c>=w&&c<L)return!0}let h=/\bwww\.[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+[^\s\])"]*/gi;for(;(d=h.exec(l))!==null;){let w=d.index,L=d.index+d[0].length;if(c>=w&&c<L)return!0}let f=/\b[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.(com|org|net|edu|gov|mil|int|info|biz|name|museum|coop|aero|asia|cat|jobs|mobi|travel|xxx|pro|tel|post|co\.uk|co\.jp|co\.kr|co\.nz|co\.au|co\.za|co\.in|co\.id|co\.th|co\.il|ac\.uk|gov\.uk|org\.uk|de|fr|it|es|nl|be|ch|at|se|no|dk|fi|ie|pl|cz|hu|ro|bg|gr|pt|ru|ua|sk|si|hr|lt|lv|ee|cn|jp|kr|tw|hk|sg|my|th|vn|id|ph|in|pk|bd|lk|np|af|au|nz|fj|ca|mx|br|ar|cl|co|pe|ve|ec|uy|py|bo|cr|pa|gt|hn|ni|sv|cu|do|jm|tt|bs|bb|za|eg|ng|ke|gh|tz|ug|zw|ma|dz|tn|sn|ci|cm|ao|mz|na|bw|mw|zm|rw|so|sd|et|ly|iq|ir|sa|ae|kw|qa|om|ye|jo|lb|sy|il|ps|tr|am|az|ge|kz|uz|tm|tj|kg|mn|io|ai|sh|tv|me|cc|ws|to|ly|gl|gd|ms|vg|ag|lc|vc|dm|kn|gp|mq|aw|cw|sx|bq|tc|ky|bm|pr|vi)(?:\b|\/|:|\?|#|$)/gi;for(;(d=f.exec(l))!==null;){let w=d.index,L=d.index+d[0].length;if(c>=w&&c<L&&(w===0||/[\s\(\[\{<"']/.test(l[w-1])))return!0}if(/\.(com|org|net|edu|gov|io|ai|me|tv|co|uk|de|fr|it|jp|cn|au|ca|br|in|ru)\b/i.test(r))return!0;let g=a.substring(Math.max(0,e-100),e),k=a.substring(e+t,Math.min(a.length,e+t+100));return!!(/(?:https?|ftp|ftps):\/\/[^\s]*$/.test(g)||/www\.[^\s]*$/.test(g)||/^\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?(?:\/|\?|#|:|\s|$)/.test(k))}function bs(a,e){let t=0,o=!1;for(let r=e-1;r>=Math.max(0,e-500);r--){if(r>0&&a[r]==="]"&&a[r-1]==="]"){t--,r--;continue}if(r<a.length-1&&a[r]==="["&&a[r+1]==="["){if(t++,t>0){o=!0;break}r--;continue}if(a[r]===`
+`&&t===0)break}if(o)return!0;let s=0;for(let r=0;r<e;r++)a[r]==="`"&&s++;if(s%2===1)return!0;let i=0;for(let r=e-1;r>=Math.max(0,e-300);r--)if(a[r]===")")i--;else if(a[r]==="("){if(i++,i>0&&r>0&&a[r-1]==="]")return!0}else if(a[r]===`
+`)break;let n=0;for(let r=e-1;r>=Math.max(0,e-300);r--)if(a[r]==="]")n--;else if(a[r]==="["){if(n++,n>0)for(let l=e;l<Math.min(a.length,e+300);l++){if(a[l]==="]"&&l<a.length-1&&a[l+1]==="(")return!0;if(a[l]===`
+`)break}}else if(a[r]===`
+`)break;return!1}function xs(a,e){let t=e;for(;t>0&&a[t-1]!==`
+`;)t--;let o=e;for(;o<a.length&&a[o]!==`
+`;)o++;let s=a.substring(t,o),i=e-t,n=s.lastIndexOf("^",i);if(n!==-1){let r=s.substring(n,i+1);if(/^\^[\w\-]*$/.test(r))return!0}return!1}function Ss(a,e){let t=e;for(;t>0&&a[t-1]!==`
+`;)t--;let o=e;for(;o<a.length&&a[o]!==`
+`;)o++;if(!a.substring(t,o).includes("|"))return!1;let i=t-1,n=10,r=0;for(;i>0&&r<n;){let c=i;for(;i>0&&a[i-1]!==`
+`;)i--;let u=a.substring(i,c).trim();if(u.includes("|")&&u.includes("-")&&(u.replace(/\|/g,"").match(/-/g)||[]).length>=3)return!0;r++,i--}let l=o+1;for(r=0;l<a.length&&r<3;){let c=l;for(;l<a.length&&a[l]!==`
+`;)l++;let u=a.substring(c,l).trim();if(u.includes("|")&&u.includes("-")&&(u.replace(/\|/g,"").match(/-/g)||[]).length>=3)return!0;r++,l++}return!1}Ye.exports={getFrontmatterBounds:ws,isInsideAlias:ys,isPartOfUrl:vs,isInsideLinkOrCode:bs,isInsideBlockReference:xs,isInsideTable:Ss}});var me=D(($a,et)=>{var{MarkdownView:Cs}=require("obsidian");function Ls(a){return a.replace(/\s+/g,"-").replace(/[^\w\-]/g,"").toLowerCase()}async function ke(a,e){let t=a.match(/\n\n((?:#[\w\-]+\s*)+)$/),o=t?t[1].match(/#[\w\-]+/g).map(n=>n.substring(1)):[],s=e.filter(n=>!o.includes(n));if(s.length===0)return a;let i=s.map(n=>`#${n}`).join(" ");return o.length>0?a=a.replace(/\n\n((?:#[\w\-]+\s*)+)$/,`
+
+$1 ${i}`):a=a.trimEnd()+`
+
+${i}`,a}async function Xe(a,e,t){let s=a.vault.getMarkdownFiles().find(r=>r.basename===e);if(!s)return;let i=await a.vault.read(s);new RegExp(`#${t}\\b`).test(i)||(i=await ke(i,[t]),await a.vault.modify(s,i))}async function Ts(a,e,t,o){if(t&&t.length>0){let s=a.workspace.getActiveViewOfType(Cs),n=s&&s.file.path===e.path?s.editor:null;if(n){let r=n.getValue();if(t.every(g=>new RegExp(`#${g}\\b`).test(r)))return;let c=r.match(/\n\n((?:#[\w\-]+\s*)+)$/),u=c?c[1].match(/#[\w\-]+/g).map(g=>g.substring(1)):[],d=t.filter(g=>!u.includes(g));if(d.length===0)return;let h=d.map(g=>`#${g}`).join(" "),f=n.lastLine(),p=n.getLine(f).length;if(u.length>0)for(let g=f;g>=Math.max(0,f-10);g--){let k=n.getLine(g);if(k.trim().match(/^#[\w\-]+(\s+#[\w\-]+)*$/)){n.replaceRange(` ${h}`,{line:g,ch:k.length});break}}else n.replaceRange(`
+
+${h}`,{line:f,ch:p})}else{let r=await a.vault.read(e);r=await ke(r,t),await a.vault.modify(e,r)}}if(o&&o.size>0)for(let[s,i]of o)await Xe(a,s,i)}et.exports={sanitizeTagName:Ls,addTagsToContent:ke,addTagToTargetNote:Xe,addTagsToFile:Ts}});var st=D((Ia,tt)=>{var{Notice:se}=require("obsidian");async function Es(a,e,t,o,s,i,n=!1){let r=a.workspace.getActiveFile();if(!r){new se("No active file");return}let l=await t(r,n);n&&l?new i(a,l,r.basename).open():!n&&l&&l.changed?(new se(`Linked ${l.linkCount} keyword(s) in current note!`),e.statistics.totalLinksCreated+=l.linkCount,e.statistics.totalNotesProcessed+=1,e.statistics.lastRunDate=new Date().toISOString(),await o(),setTimeout(()=>s(),100)):n||new se("No keywords found to link")}async function As(a,e,t,o,s,i,n=!1){let r=a.vault.getMarkdownFiles(),l=0,c=0,u=[];for(let d of r){if(d.extension!=="md")continue;let h=await t(d,n);h&&h.changed&&(c++,l+=h.linkCount,n&&u.push({file:d,fileName:d.basename,...h}))}!n&&c>0&&(e.statistics.totalLinksCreated+=l,e.statistics.totalNotesProcessed+=c,e.statistics.lastRunDate=new Date().toISOString(),await o()),n&&u.length>0?new i(a,u,s).open():n?new se("No keywords found to link in any notes"):new se(`Linked ${l} keyword(s) in ${c} note(s)!`)}tt.exports={linkKeywordsInCurrentNote:Es,linkKeywordsInAllNotes:As}});var at=D((Na,ot)=>{var{Notice:Z}=require("obsidian");async function $s(a,e,t){new t(a,e).open()}async function Is(a,e,t){let o=a.workspace.getActiveFile();if(!o){new Z("No active note found. Please open a note first.");return}new t(a,e,o).open()}function Ns(a,e,t){let o=e.getValue(),s=[],i=o.split(`
+`),n=/<span class="akl-suggested-link" data-target="([^"]*)" data-block="([^"]*)" data-use-relative="([^"]*)"[^>]*>([^<]+)<\/span>/g;if(i.forEach((r,l)=>{let c;for(n.lastIndex=0;(c=n.exec(r))!==null;)s.push({lineNumber:l,targetNote:c[1],blockRef:c[2],useRelative:c[3]==="true",matchText:c[4],fullMatch:c[0]})}),s.length===0){new Z("No link suggestions found in current note");return}new t(a,e,s).open()}function Ds(a,e,t){let o=a.getCursor(),s=a.getLine(o.line),i=/<span class="akl-suggested-link" data-target="([^"]*)" data-block="([^"]*)" data-use-relative="([^"]*)"[^>]*>([^<]+)<\/span>/g,n=[...s.matchAll(i)];if(n.length===0){new Z("No link suggestions found on this line");return}let r=a.getValue(),l=a.posToOffset({line:o.line,ch:0}),c=e(r,l),u=0;n.forEach(d=>{let h=d[0],f=d[1],p=d[2],g=d[3]==="true",k=d[4],w,L=p?`${f}#${p}`:f;if(g){let T=c?k.replace(/\|/g,"\\|"):k,m=encodeURIComponent(f)+".md",v=p?`#${p}`:"";w=`[${T}](${m}${v})`}else c?w=f===k&&!p?`[[${k}]]`:`[[${L}\\|${k}]]`:w=f===k&&!p?`[[${k}]]`:`[[${L}|${k}]]`;s=s.replace(h,w),u++}),a.setLine(o.line,s),new Z(`Accepted ${u} link suggestion${u>1?"s":""} on this line`),setTimeout(()=>t(),100)}function Fs(a,e,t){let o=a.getValue(),s=o,i=0,n=/<span class="akl-suggested-link" data-target="([^"]*)" data-block="([^"]*)" data-use-relative="([^"]*)"[^>]*>([^<]+)<\/span>/g;s=o.replace(n,(r,l,c,u,d,h)=>{i++;let f=e(o,h),p,g=c?`${l}#${c}`:l;if(u==="true"){let k=f?d.replace(/\|/g,"\\|"):d,w=encodeURIComponent(l)+".md",L=c?`#${c}`:"";p=`[${k}](${w}${L})`}else f?p=l===d&&!c?`[[${d}]]`:`[[${g}\\|${d}]]`:p=l===d&&!c?`[[${d}]]`:`[[${g}|${d}]]`;return p}),i>0?(a.setValue(s),new Z(`Accepted ${i} link suggestion${i>1?"s":""}`),setTimeout(()=>t(),100)):new Z("No link suggestions found in current note")}ot.exports={suggestKeywords:$s,suggestKeywordsFromCurrentNote:Is,reviewSuggestions:Ns,acceptSuggestionAtCursor:Ds,acceptAllSuggestions:Fs}});var rt=D((Da,nt)=>{var{Notice:_}=require("obsidian"),{escapeCSV:oe}=(W(),P(U));async function zs(a,e){try{let t=JSON.stringify(e.keywords,null,2),s=`auto-keyword-linker-export-${new Date().toISOString().split("T")[0]}.json`;await a.vault.create(s,t),new _(`Keywords exported to ${s}`)}catch(t){new _(`Export failed: ${t.message}`)}}async function Bs(a,e,t){new t(a,e).open()}async function Ks(a){try{let i=`keyword,target,variations,enableTags,linkScope,scopeFolder,useRelativeLinks,blockRef,requireTag,onlyInNotesLinkingTo,suggestMode,preventSelfLink
+Python,Languages/Python,"python|py|Python3",false,vault-wide,,false,,,false,false
+JavaScript,Languages/JavaScript,"js|javascript",false,vault-wide,,false,,,false,false
+API,Documentation/API,"api|REST API",false,same-folder,,false,,reviewed,true,false
+`,n="auto-keyword-linker-template.csv";await a.vault.create(n,i),new _(`CSV template downloaded: ${n}`)}catch(e){new _(`Template download failed: ${e.message}`)}}async function Vs(a,e){try{let o=["keyword,target,variations,enableTags,linkScope,scopeFolder,useRelativeLinks,blockRef,requireTag,onlyInNotesLinkingTo,suggestMode,preventSelfLink"];for(let r of e.keywords){let l=r.variations&&r.variations.length>0?`"${r.variations.join("|")}"`:"",c=[oe(r.keyword),oe(r.target),l,r.enableTags||!1,r.linkScope||"vault-wide",oe(r.scopeFolder||""),r.useRelativeLinks||!1,oe(r.blockRef||""),oe(r.requireTag||""),r.onlyInNotesLinkingTo||!1,r.suggestMode||!1,r.preventSelfLink||!1].join(",");o.push(c)}let s=o.join(`
+`),n=`auto-keyword-linker-export-${new Date().toISOString().split("T")[0]}.csv`;await a.vault.create(n,s),new _(`Keywords exported to ${n}`)}catch(t){new _(`CSV export failed: ${t.message}`)}}async function Ms(a,e,t){new t(a,e).open()}nt.exports={exportKeywords:zs,importKeywords:Bs,downloadCSVTemplate:Ks,exportKeywordsToCSV:Vs,importKeywordsFromCSV:Ms}});var lt=D((Fa,it)=>{function Rs(a,e,t){new t(a,e).open()}it.exports={showStatistics:Rs}});var dt=D((za,ct)=>{var{Modal:qs}=require("obsidian"),we=class extends qs{constructor(e,t){super(e),this.settings=t}onOpen(){let{contentEl:e}=this;e.createEl("h2",{text:"Auto Keyword Linker Statistics"});let t=this.settings.statistics;if(e.createEl("p",{text:`Total Links Created: ${t.totalLinksCreated||0}`}),e.createEl("p",{text:`Total Notes Processed: ${t.totalNotesProcessed||0}`}),e.createEl("p",{text:`Total Keywords Configured: ${this.settings.keywords.length}`}),t.lastRunDate){let i=new Date(t.lastRunDate);e.createEl("p",{text:`Last Run: ${i.toLocaleString()}`})}e.createEl("h3",{text:"Configured Keywords"});let o=e.createEl("ul");for(let i of this.settings.keywords){let n=o.createEl("li");n.appendText(`${i.keyword} \u2192 ${i.target}`),i.variations&&i.variations.length>0&&n.appendText(` (${i.variations.length} variations)`),i.enableTags&&n.appendText(" [Tags enabled]")}let s=e.createEl("button",{text:"Close"});s.style.marginTop="20px",s.addEventListener("click",()=>this.close())}onClose(){let{contentEl:e}=this;e.empty()}};ct.exports=we});var gt=D((Ba,ut)=>{var{Modal:Os,Notice:Ps}=require("obsidian"),ye=class extends Os{constructor(e,t,o=null){super(e),this.plugin=t,this.currentFile=o,this.suggestions=[],this.selectedSuggestions=new Map,this.isAnalyzing=!0,this.searchQuery="",this.sortOrder="frequency-desc"}async onOpen(){let{contentEl:e}=this;e.addClass("akl-suggestion-modal");let t=this.currentFile?`Suggested Keyword Builder - ${this.currentFile.basename}`:"Suggested Keyword Builder";e.createEl("h2",{text:t});let o=e.createDiv({cls:"akl-status"}),s=this.currentFile?"Analyzing current note...":"Analyzing your notes...";o.createEl("p",{text:s,cls:"akl-analyzing"});try{this.currentFile?this.suggestions=await this.plugin.analyzeCurrentNoteForKeywords(this.currentFile):this.suggestions=await this.plugin.analyzeNotesForKeywords(),this.isAnalyzing=!1,o.empty();let i=this.currentFile?1:this.plugin.app.vault.getMarkdownFiles().length,n=i===1?"note":"notes";o.createEl("p",{text:`Found ${this.suggestions.length} suggestions from ${i} ${n}`,cls:"akl-stats"});for(let r of this.suggestions)this.selectedSuggestions.set(r.keyword,{selected:!1,addAsVariationTo:null});this.renderSuggestions(e)}catch(i){o.empty(),o.createEl("p",{text:`Error analyzing notes: ${i.message}`,cls:"akl-error"}),console.error("Error analyzing notes:",i)}}renderSuggestions(e){let t=e.createDiv({cls:"akl-controls-container"}),s=t.createDiv({cls:"akl-search-container"}).createEl("input",{type:"text",placeholder:"Search suggestions...",cls:"akl-search-input"});s.value=this.searchQuery,s.addEventListener("input",g=>{this.searchQuery=g.target.value,this.refreshSuggestionList()});let i=t.createDiv({cls:"akl-sort-container"}),n=i.createEl("label",{text:"Sort by: ",cls:"akl-sort-label"}),r=i.createEl("select",{cls:"akl-sort-select"}),l=[{value:"frequency-desc",label:"Most Common First"},{value:"frequency-asc",label:"Least Common First"},{value:"alpha-asc",label:"A to Z"},{value:"alpha-desc",label:"Z to A"},{value:"length-asc",label:"Shortest First"},{value:"length-desc",label:"Longest First"}];for(let g of l){let k=r.createEl("option",{value:g.value,text:g.label});g.value===this.sortOrder&&(k.selected=!0)}r.addEventListener("change",g=>{this.sortOrder=g.target.value,this.refreshSuggestionList()});let c=e.createDiv({cls:"akl-button-row"});c.createEl("button",{text:"Select All",cls:"akl-mini-button"}).addEventListener("click",()=>{for(let[g,k]of this.selectedSuggestions)this.matchesSearch(g)&&(k.selected=!0);this.refreshSuggestionList()}),c.createEl("button",{text:"Deselect All",cls:"akl-mini-button"}).addEventListener("click",()=>{for(let[g,k]of this.selectedSuggestions)this.matchesSearch(g)&&(k.selected=!1);this.refreshSuggestionList()}),this.suggestionsListEl=e.createDiv({cls:"akl-suggestions-list"}),this.refreshSuggestionList();let h=e.createDiv({cls:"akl-action-row"});h.createEl("button",{text:"Add Selected Keywords",cls:"mod-cta"}).addEventListener("click",()=>this.addSelectedKeywords()),h.createEl("button",{text:"Cancel"}).addEventListener("click",()=>this.close())}matchesSearch(e){return this.searchQuery?e.toLowerCase().includes(this.searchQuery.toLowerCase()):!0}sortSuggestions(e){let t=[...e];switch(this.sortOrder){case"frequency-desc":t.sort((o,s)=>s.totalNotes-o.totalNotes);break;case"frequency-asc":t.sort((o,s)=>o.totalNotes-s.totalNotes);break;case"alpha-asc":t.sort((o,s)=>o.keyword.localeCompare(s.keyword));break;case"alpha-desc":t.sort((o,s)=>s.keyword.localeCompare(o.keyword));break;case"length-asc":t.sort((o,s)=>o.keyword.length-s.keyword.length);break;case"length-desc":t.sort((o,s)=>s.keyword.length-o.keyword.length);break;default:t.sort((o,s)=>s.totalNotes-o.totalNotes)}return t}refreshSuggestionList(){if(!this.suggestionsListEl)return;this.suggestionsListEl.empty();let e=this.suggestions.filter(t=>this.matchesSearch(t.keyword));if(e.length===0){this.suggestionsListEl.createEl("p",{text:"No suggestions match your search.",cls:"akl-no-results"});return}e=this.sortSuggestions(e);for(let t of e){let o=this.selectedSuggestions.get(t.keyword),s=this.suggestionsListEl.createDiv({cls:"akl-suggestion-item"}),i=s.createDiv({cls:"akl-suggestion-header"}),n=i.createEl("input",{type:"checkbox",cls:"akl-checkbox"});n.checked=o.selected,n.addEventListener("change",d=>{o.selected=d.target.checked});let r=i.createDiv({cls:"akl-suggestion-label"});if(r.createSpan({text:t.keyword,cls:"akl-keyword-text"}),r.createSpan({text:` (${t.totalNotes} notes)`,cls:"akl-count-text"}),t.notes.length>0){let d=s.createDiv({cls:"akl-notes-preview"});d.createEl("span",{text:"In: ",cls:"akl-notes-label"}),d.createEl("span",{text:t.notes.join(", ")+(t.totalNotes>5?"...":""),cls:"akl-notes-list"})}let l=s.createDiv({cls:"akl-variation-selector"});l.createEl("span",{text:"Or add as variation to: ",cls:"akl-variation-label"});let c=l.createEl("select",{cls:"akl-variation-dropdown"}),u=c.createEl("option",{value:"",text:"(None - add as new keyword)"});for(let d of this.plugin.settings.keywords)d.keyword.toLowerCase()!==t.keyword.toLowerCase()&&c.createEl("option",{value:d.keyword,text:d.keyword});c.value=o.addAsVariationTo||"",c.addEventListener("change",d=>{o.addAsVariationTo=d.target.value||null,d.target.value&&(n.checked=!0,o.selected=!0)})}}async addSelectedKeywords(){let e=0,t=0;for(let[s,i]of this.selectedSuggestions)if(i.selected)if(i.addAsVariationTo){let n=this.plugin.settings.keywords.find(r=>r.keyword===i.addAsVariationTo);n&&(n.variations||(n.variations=[]),n.variations.includes(s)||(n.variations.push(s),t++))}else this.plugin.settings.keywords.push({keyword:s,target:s,variations:[],enableTags:!1,linkScope:"vault-wide",scopeFolder:""}),e++;await this.plugin.saveSettings();let o="";e>0&&t>0?o=`Added ${e} new keyword(s) and ${t} variation(s)`:e>0?o=`Added ${e} new keyword(s)`:t>0?o=`Added ${t} variation(s)`:o="No keywords selected",new Ps(o),this.close()}onClose(){let{contentEl:e}=this;e.empty()}};ut.exports=ye});var ht=D((Ka,pt)=>{var{Modal:Ws,Notice:ve}=require("obsidian"),be=class extends Ws{constructor(e,t){super(e),this.plugin=t}onOpen(){let{contentEl:e}=this;e.createEl("h2",{text:"Import Keywords from JSON"}),e.createEl("p",{text:"Select a JSON file from your vault to import keywords. This will ADD to your existing keywords."});let t=this.app.vault.getFiles().filter(r=>r.extension==="json");if(t.length===0){e.createEl("p",{text:"No JSON files found in vault. Please create an export first.",cls:"mod-warning"}),e.createEl("button",{text:"Close"}).addEventListener("click",()=>this.close());return}let o=e.createEl("select");o.style.width="100%",o.style.marginBottom="10px";for(let r of t){let l=o.createEl("option",{text:r.path,value:r.path})}let s=e.createDiv();s.style.display="flex",s.style.gap="10px",s.style.marginTop="20px",s.createEl("button",{text:"Import",cls:"mod-cta"}).addEventListener("click",async()=>{let r=o.value,l=this.app.vault.getAbstractFileByPath(r);if(l)try{let c=await this.app.vault.read(l),u=JSON.parse(c);if(!Array.isArray(u)){new ve("Invalid JSON format: expected an array of keywords");return}let d=0,h=0;for(let p of u){p.enableTags===void 0&&(p.enableTags=!1);let g=this.plugin.settings.keywords.findIndex(k=>k.keyword.toLowerCase()===p.keyword.toLowerCase());if(g!==-1){let k=this.plugin.settings.keywords[g];k.variations||(k.variations=[]),p.variations||(p.variations=[]);let w=k.variations.map(T=>T.toLowerCase()),L=p.variations.filter(T=>!w.includes(T.toLowerCase()));L.length>0&&(k.variations.push(...L),h++)}else this.plugin.settings.keywords.push(p),d++}await this.plugin.saveSettings();let f="";d>0&&h>0?f=`Imported: ${d} new keyword(s), merged variations into ${h} existing keyword(s)`:d>0?f=`Imported ${d} new keyword(s)`:h>0?f=`Merged variations into ${h} existing keyword(s)`:f="No new keywords or variations to import",new ve(f),this.close(),this.app.setting.close(),this.app.setting.open(),this.app.setting.openTabById(this.plugin.manifest.id)}catch(c){new ve(`Import failed: ${c.message}`)}}),s.createEl("button",{text:"Cancel"}).addEventListener("click",()=>this.close())}onClose(){let{contentEl:e}=this;e.empty()}};pt.exports=be});var mt=D((Va,kt)=>{var{Modal:Gs,Notice:ie}=require("obsidian"),{parseCSVLine:ft}=(W(),P(U)),xe=class extends Gs{constructor(e,t){super(e),this.plugin=t}onOpen(){let{contentEl:e}=this;e.createEl("h2",{text:"Import Keywords from CSV"}),e.createEl("p",{text:"Select a CSV file from your vault to import keywords. This will ADD to your existing keywords."});let t=this.app.vault.getFiles().filter(r=>r.extension==="csv");if(t.length===0){e.createEl("p",{text:"No CSV files found in vault. Download a template first or export existing keywords.",cls:"mod-warning"}),e.createEl("button",{text:"Close"}).addEventListener("click",()=>this.close());return}let o=e.createEl("select");o.style.width="100%",o.style.marginBottom="10px";for(let r of t){let l=o.createEl("option",{text:r.path,value:r.path})}let s=e.createDiv();s.style.display="flex",s.style.gap="10px",s.style.marginTop="20px",s.createEl("button",{text:"Import",cls:"mod-cta"}).addEventListener("click",async()=>{let r=o.value,l=this.app.vault.getAbstractFileByPath(r);if(l)try{let u=(await this.app.vault.read(l)).split(`
+`).filter(L=>L.trim());if(u.length===0){new ie("CSV file is empty");return}let d=ft(u[0]),h={};if(d.forEach((L,T)=>{h[L.toLowerCase()]=T}),h.keyword===void 0||h.target===void 0){new ie('CSV must have "keyword" and "target" columns');return}let f=0,p=0,g=0,k=[];for(let L=1;L<u.length;L++){let T=L+1;try{let m=ft(u[L]);if(m.length===0||!m[h.keyword])continue;let v=m[h.keyword]||"",S=m[h.target]||"";if(!v.trim()||!S.trim()){k.push(`Line ${T}: Missing keyword or target`),g++;continue}let E=m[h.variations]||"",F=E?E.split("|").map(I=>I.trim()).filter(I=>I):[],z=I=>{if(typeof I=="boolean")return I;let B=String(I).toLowerCase().trim();return B==="true"||B==="yes"||B==="1"},V={keyword:v.trim(),target:S.trim(),variations:F,enableTags:z(m[h.enabletags]||!1),linkScope:m[h.linkscope]||"vault-wide",scopeFolder:m[h.scopefolder]||"",useRelativeLinks:z(m[h.userelativelinks]||!1),blockRef:m[h.blockref]||"",requireTag:m[h.requiretag]||"",onlyInNotesLinkingTo:z(m[h.onlyinnoteslinkingto]||!1),suggestMode:z(m[h.suggestmode]||!1),preventSelfLink:z(m[h.preventselflink]||!1)},C=this.plugin.settings.keywords.findIndex(I=>I.keyword.toLowerCase()===V.keyword.toLowerCase());if(C!==-1){let I=this.plugin.settings.keywords[C],B=new Set(I.variations.map(K=>K.toLowerCase())),M=!1;for(let K of V.variations)B.has(K.toLowerCase())||(I.variations.push(K),M=!0);M&&p++}else this.plugin.settings.keywords.push(V),f++}catch(m){k.push(`Line ${T}: ${m.message}`),g++}}await this.plugin.saveSettings();let w="";f>0&&p>0?w=`Imported: ${f} new keyword(s), merged variations into ${p} existing keyword(s)`:f>0?w=`Imported ${f} new keyword(s)`:p>0?w=`Merged variations into ${p} existing keyword(s)`:w="No new keywords or variations to import",g>0&&(w+=`
+${g} error(s) encountered`,console.error("CSV Import Errors:",k)),new ie(w),this.close(),this.app.setting.close(),this.app.setting.open(),this.app.setting.openTabById(this.plugin.manifest.id)}catch(c){new ie(`Import failed: ${c.message}`),console.error("CSV Import Error:",c)}}),s.createEl("button",{text:"Cancel"}).addEventListener("click",()=>this.close())}onClose(){let{contentEl:e}=this;e.empty()}};kt.exports=xe});var yt=D((Ma,wt)=>{var{Modal:js}=require("obsidian"),Se=class extends js{constructor(e,t,o){super(e),this.results=t,this.fileName=o}onOpen(){let{contentEl:e}=this;e.createEl("h2",{text:`Preview: ${this.fileName}`}),e.createEl("p",{text:`Found ${this.results.linkCount} keyword(s) to link:`});let t=e.createEl("ul");for(let i of this.results.changes){let n=t.createEl("li");n.createEl("strong",{text:i.keyword}),n.appendText(" \u2192 "),n.createEl("code",{text:`[[${i.target}]]`}),n.createEl("br"),n.createEl("small",{text:i.context,cls:"preview-context"})}let o=e.createDiv({cls:"modal-button-container"});o.style.marginTop="20px",o.style.display="flex",o.style.gap="10px",o.createEl("button",{text:"Close"}).addEventListener("click",()=>this.close())}onClose(){let{contentEl:e}=this;e.empty()}};wt.exports=Se});var xt=D((Ra,bt)=>{var{Modal:Hs,Notice:vt,MarkdownView:Us}=require("obsidian"),Ce=class extends Hs{constructor(e,t,o){super(e),this.editor=t,this.suggestions=o,this.selectedSuggestions=new Set(o.map((s,i)=>i))}onOpen(){let{contentEl:e}=this;e.empty(),e.addClass("akl-suggestion-review-modal"),e.createEl("h2",{text:"Review Link Suggestions"});let t=e.createEl("p",{text:`Found ${this.suggestions.length} link suggestion${this.suggestions.length>1?"s":""} in this note. Select which ones to accept:`});t.style.marginBottom="1em",t.style.color="var(--text-muted)";let o=e.createDiv({cls:"akl-button-container"});o.style.marginBottom="1em",o.style.display="flex",o.style.gap="0.5em",o.createEl("button",{text:"Select All"}).addEventListener("click",()=>{this.suggestions.forEach((d,h)=>{this.selectedSuggestions.add(h);let f=e.querySelector(`input[data-index="${h}"]`);f&&(f.checked=!0)})}),o.createEl("button",{text:"Deselect All"}).addEventListener("click",()=>{this.selectedSuggestions.clear(),e.querySelectorAll('input[type="checkbox"]').forEach(d=>d.checked=!1)});let n=e.createDiv({cls:"akl-suggestions-list"});n.style.maxHeight="400px",n.style.overflowY="auto",n.style.marginBottom="1em",n.style.border="1px solid var(--background-modifier-border)",n.style.borderRadius="6px",n.style.padding="0.5em",this.suggestions.forEach((d,h)=>{let f=n.createDiv({cls:"akl-suggestion-item"});f.style.padding="0.75em",f.style.marginBottom="0.5em",f.style.background="var(--background-secondary)",f.style.borderRadius="6px",f.style.display="flex",f.style.alignItems="center",f.style.gap="0.75em";let p=f.createEl("input",{type:"checkbox"});p.checked=!0,p.setAttribute("data-index",h.toString()),p.addEventListener("change",m=>{m.target.checked?this.selectedSuggestions.add(h):this.selectedSuggestions.delete(h)});let g=f.createDiv({cls:"akl-suggestion-content"});g.style.flex="1";let k=g.createDiv();k.style.marginBottom="0.25em",k.createSpan({text:d.matchText,cls:"akl-keyword-highlight"}),k.createSpan({text:" \u2192 ",cls:"akl-arrow"}),k.createSpan({text:d.targetNote,cls:"akl-target-highlight"});let w=g.createDiv();w.style.fontSize="0.9em",w.style.color="var(--text-muted)",w.createSpan({text:`Line ${d.lineNumber+1}`}),k.querySelectorAll(".akl-keyword-highlight").forEach(m=>{m.style.background="rgba(255, 170, 0, 0.25)",m.style.padding="2px 4px",m.style.borderRadius="3px",m.style.fontWeight="500"}),k.querySelectorAll(".akl-target-highlight").forEach(m=>{m.style.color="var(--text-accent)",m.style.fontWeight="500"})});let r=e.createDiv({cls:"akl-action-buttons"});r.style.display="flex",r.style.gap="0.5em",r.style.justifyContent="flex-end",r.createEl("button",{text:"Cancel"}).addEventListener("click",()=>this.close());let c=r.createEl("button",{text:`Accept Selected (${this.selectedSuggestions.size})`,cls:"mod-cta"});c.addEventListener("click",()=>{this.acceptSelected()});let u=()=>{c.textContent=`Accept Selected (${this.selectedSuggestions.size})`};e.querySelectorAll('input[type="checkbox"]').forEach(d=>{d.addEventListener("change",u)})}acceptSelected(){if(this.selectedSuggestions.size===0){new vt("No suggestions selected");return}let e=Array.from(this.selectedSuggestions).sort((o,s)=>this.suggestions[s].lineNumber-this.suggestions[o].lineNumber),t=0;e.forEach(o=>{let s=this.suggestions[o],i=this.editor.getLine(s.lineNumber);if(!i.includes(s.fullMatch))return;let n=this.editor.getValue(),r=this.editor.posToOffset({line:s.lineNumber,ch:0}),l=this.app.plugins.plugins["auto-keyword-linker"],c=l?l.isInsideTable(n,r):!1,u,d=s.blockRef?`${s.targetNote}#${s.blockRef}`:s.targetNote;if(s.useRelative){let f=c?s.matchText.replace(/\|/g,"\\|"):s.matchText,p=encodeURIComponent(s.targetNote)+".md",g=s.blockRef?`#${s.blockRef}`:"";u=`[${f}](${p}${g})`}else c?u=s.targetNote===s.matchText&&!s.blockRef?`[[${s.matchText}]]`:`[[${d}\\|${s.matchText}]]`:u=s.targetNote===s.matchText&&!s.blockRef?`[[${s.matchText}]]`:`[[${d}|${s.matchText}]]`;let h=i.replace(s.fullMatch,u);this.editor.setLine(s.lineNumber,h),t++}),new vt(`Accepted ${t} link suggestion${t>1?"s":""}`),this.close(),setTimeout(()=>{let o=this.app.workspace.getActiveViewOfType(Us);if(o&&o.editor){let s=this.app.plugins.plugins["auto-keyword-linker"];s&&s.updateStatusBar&&s.updateStatusBar()}},100)}onClose(){let{contentEl:e}=this;e.empty()}};bt.exports=Ce});var Ct=D((qa,St)=>{var{Modal:Zs,Notice:Le}=require("obsidian"),Te=class extends Zs{constructor(e,t,o){super(e),this.results=t,this.plugin=o,this.selectedLinks=new Map,this.results.forEach((s,i)=>{let n=new Set(s.changes.map((r,l)=>l));this.selectedLinks.set(i,n)})}onOpen(){let{contentEl:e}=this;e.createEl("h2",{text:"Preview: Select Links to Create"});let t=this.results.reduce((p,g)=>p+g.linkCount,0),o=this.getSelectedLinksCount(),s=`Found ${t} link(s) in ${this.results.length} note(s). ${o} link(s) selected.`,i=e.createEl("p",{text:s,cls:"bulk-preview-stats"}),n=e.createDiv({cls:"bulk-preview-select-buttons"});n.style.marginBottom="15px",n.style.display="flex",n.style.gap="10px",n.createEl("button",{text:"Select All Links"}).addEventListener("click",()=>{this.results.forEach((p,g)=>{let k=new Set(p.changes.map((w,L)=>L));this.selectedLinks.set(g,k)}),e.querySelectorAll('input[type="checkbox"]').forEach(p=>p.checked=!0),this.updateStats(i)}),n.createEl("button",{text:"Deselect All Links"}).addEventListener("click",()=>{this.selectedLinks.clear(),e.querySelectorAll('input[type="checkbox"]').forEach(p=>p.checked=!1),this.updateStats(i)});let c=e.createDiv({cls:"preview-scroll"});c.style.maxHeight="400px",c.style.overflowY="auto",c.style.marginBottom="20px",c.style.border="1px solid var(--background-modifier-border)",c.style.borderRadius="6px",c.style.padding="10px",this.results.forEach((p,g)=>{let k=c.createDiv({cls:"preview-note"});k.style.marginBottom="15px",k.style.padding="10px",k.style.background="var(--background-secondary)",k.style.borderRadius="6px";let w=k.createDiv();w.style.display="flex",w.style.alignItems="center",w.style.gap="10px",w.style.marginBottom="10px";let L=w.createEl("input",{type:"checkbox"});L.checked=!0,L.setAttribute("data-note-index",g.toString()),L.addEventListener("change",v=>{let S=v.target.checked,E=this.selectedLinks.get(g)||new Set;S?(p.changes.forEach((F,z)=>E.add(z)),this.selectedLinks.set(g,E),e.querySelectorAll(`input[data-note="${g}"]`).forEach(F=>F.checked=!0)):(this.selectedLinks.delete(g),e.querySelectorAll(`input[data-note="${g}"]`).forEach(F=>F.checked=!1)),this.updateStats(i)});let T=w.createDiv();T.style.flex="1",T.createEl("strong",{text:p.fileName}),T.createEl("span",{text:` (${p.linkCount} link${p.linkCount!==1?"s":""})`,cls:"bulk-preview-link-count"});let m=k.createDiv();m.style.marginLeft="30px",p.changes.forEach((v,S)=>{let E=m.createDiv();E.style.display="flex",E.style.alignItems="flex-start",E.style.gap="8px",E.style.marginBottom="8px",E.style.padding="4px",E.style.borderRadius="4px",E.style.transition="background 0.2s",E.addEventListener("mouseenter",()=>{E.style.background="var(--background-modifier-hover)"}),E.addEventListener("mouseleave",()=>{E.style.background="transparent"});let F=E.createEl("input",{type:"checkbox"});F.checked=!0,F.setAttribute("data-note",g.toString()),F.setAttribute("data-link",S.toString()),F.style.marginTop="2px",F.addEventListener("change",C=>{let I=this.selectedLinks.get(g)||new Set;C.target.checked?I.add(S):I.delete(S),I.size===0?this.selectedLinks.delete(g):this.selectedLinks.set(g,I);let B=p.changes.every((M,K)=>{let G=this.selectedLinks.get(g);return G&&G.has(K)});L.checked=B,this.updateStats(i)});let z=E.createDiv();z.style.flex="1",z.style.fontSize="0.9em";let V=z.createDiv();if(V.createEl("strong",{text:v.keyword}),V.appendText(" \u2192 "),V.createEl("code",{text:`[[${v.target}]]`}),v.lineNumber!==void 0){let C=z.createDiv();C.style.fontSize="0.85em",C.style.color="var(--text-muted)",C.style.marginTop="2px",C.textContent=`Line ${v.lineNumber+1}`}})});let u=e.createDiv({cls:"modal-button-container"});u.style.display="flex",u.style.gap="10px",u.style.justifyContent="flex-end",u.style.marginTop="20px",u.createEl("button",{text:"Cancel"}).addEventListener("click",()=>this.close());let h=this.getSelectedLinksCount(),f=u.createEl("button",{text:`Apply Selected Links (${h})`,cls:"mod-cta"});f.addEventListener("click",async()=>{await this.applySelected()}),this.applyBtn=f}updateStats(e){let t=this.results.reduce((s,i)=>s+i.linkCount,0),o=this.getSelectedLinksCount();e.textContent=`Found ${t} link(s) in ${this.results.length} note(s). ${o} link(s) selected.`,this.applyBtn&&(this.applyBtn.textContent=`Apply Selected Links (${o})`)}getSelectedLinksCount(){let e=0;for(let t of this.selectedLinks.values())e+=t.size;return e}async applySelected(){if(this.selectedLinks.size===0){new Le("No links selected");return}this.close();let e=this.getSelectedLinksCount();new Le(`Creating ${e} link(s)...`);let t=0,o=0;for(let[s,i]of this.selectedLinks){if(i.size===0)continue;let n=this.results[s];if(!n||!n.file)continue;let r=n.file,l=n.changes.filter((d,h)=>i.has(h)),c=new Set(l.map(d=>d.keyword.toLowerCase())),u=this.plugin.buildKeywordMap.bind(this.plugin);this.plugin.buildKeywordMap=()=>{let d=u(),h={};for(let[f,p]of Object.entries(d))c.has(f.toLowerCase())&&(h[f]=p);return h};try{let d=await this.plugin.linkKeywordsInFile(r,!1);d&&d.changed&&(t+=d.linkCount,o++)}finally{this.plugin.buildKeywordMap=u}}this.plugin.settings.statistics.totalLinksCreated+=t,this.plugin.settings.statistics.totalNotesProcessed+=o,this.plugin.settings.statistics.lastRunDate=new Date().toISOString(),await this.plugin.saveSettings(),new Le(`\u2713 Processed ${o} note(s), created ${t} link(s)`)}onClose(){let{contentEl:e}=this;e.empty()}};St.exports=Te});var Ae=D((Oa,Lt)=>{var{FuzzySuggestModal:_s,Notice:Js}=require("obsidian"),Ee=class extends _s{constructor(e,t,o,s){super(e),this.plugin=t,this.groupId=o,this.currentKeywordIds=new Set(s.map(i=>i.id))}getItems(){return this.plugin.settings.keywords.filter(e=>!this.currentKeywordIds.has(e.id))}getItemText(e){let t=e.groupId?" [In another group]":"";return`${e.keyword||"Untitled"} \u2192 ${e.target||"(no target)"}${t}`}async onChooseItem(e){e.groupId=this.groupId,e.enableTags=null,e.linkScope=null,e.scopeFolder=null,e.useRelativeLinks=null,e.blockRef=null,e.requireTag=null,e.onlyInNotesLinkingTo=null,e.suggestMode=null,e.preventSelfLink=null,await this.plugin.saveSettings(),new Js(`Keyword "${e.keyword}" assigned to group. Group settings will apply to new links.`);let t=this.app.setting.activeTab,o=$e();t instanceof o&&t.display()}};Lt.exports=Ee});var Ne=D((Pa,Tt)=>{var{FuzzySuggestModal:Qs}=require("obsidian"),Ie=class extends Qs{constructor(e,t,o,s){super(e),this.folders=t,this.currentValue=o,this.onChooseCallback=s}getItems(){return this.folders}getItemText(e){return e||"/ (Root)"}onChooseItem(e,t){this.onChooseCallback(e)}};Tt.exports=Ie});var Fe=D((Wa,Et)=>{var{FuzzySuggestModal:Ys}=require("obsidian"),De=class extends Ys{constructor(e,t,o,s){super(e),this.notes=t,this.currentValue=o,this.onChooseCallback=s}getItems(){return this.notes}getItemText(e){return e}onChooseItem(e,t){this.onChooseCallback(e)}};Et.exports=De});var $e=D((Ga,It)=>{var{PluginSettingTab:Xs,Setting:N,Notice:ze}=require("obsidian"),eo=Ae(),At=Ne(),to=Fe(),{generateId:$t}=(W(),P(U)),Be=class extends Xs{constructor(e,t){super(e,t),this.plugin=t,this.searchFilter="",this.currentTab="keywords"}display(){let{containerEl:e}=this;e.empty(),this.addCustomStyles(),e.createDiv({cls:"akl-header"}).createEl("h2",{text:"Auto Keyword Linker Settings"});let o=e.createDiv({cls:"akl-tab-nav"});[{id:"keywords",label:"Keywords",icon:"\u{1F524}"},{id:"groups",label:"Groups",icon:"\u{1F4C1}"},{id:"general",label:"General",icon:"\u2699\uFE0F"},{id:"import-export",label:"Import/Export",icon:"\u{1F4E6}"}].forEach(n=>{o.createEl("button",{text:`${n.icon} ${n.label}`,cls:`akl-tab-button ${this.currentTab===n.id?"akl-tab-active":""}`}).addEventListener("click",()=>{this.currentTab=n.id,this.display()})});let i=e.createDiv({cls:"akl-tab-content"});switch(this.currentTab){case"keywords":this.displayKeywordsTab(i);break;case"groups":this.displayGroupsTab(i);break;case"general":this.displayGeneralTab(i);break;case"import-export":this.displayImportExportTab(i);break}}displayKeywordsTab(e){e.createDiv({cls:"akl-stats-bar"}).createEl("span",{text:`${this.plugin.settings.keywords.length} keyword${this.plugin.settings.keywords.length!==1?"s":""} configured`});let o=e.createDiv({cls:"akl-section-header"});o.createEl("h3",{text:"Keywords & Variations"}),o.createEl("p",{text:"Define keywords and their variations. All variations will link to the target note.",cls:"akl-section-desc"}),e.createDiv({cls:"akl-search-container"}).createEl("input",{type:"text",placeholder:"Search keywords...",cls:"akl-search-input",value:this.searchFilter}).addEventListener("input",c=>{this.searchFilter=c.target.value,this.renderKeywords(n)});let n=e.createDiv({cls:"akl-keywords-container"});this.renderKeywords(n),e.createDiv({cls:"akl-add-button-container"}).createEl("button",{text:"+ Add Keyword",cls:"mod-cta akl-add-button"}).addEventListener("click",()=>{this.plugin.settings.keywords.push({id:$t("kw"),keyword:"",target:"",variations:[],enableTags:null,linkScope:"vault-wide",scopeFolder:"",useRelativeLinks:null,blockRef:"",requireTag:"",onlyInNotesLinkingTo:null,suggestMode:null,preventSelfLink:null,collapsed:!1,groupId:null}),this.display()})}updateCardHeader(e,t,o){e.empty();let s=t||"New Keyword",i=o?` \u2192 ${o}`:"";e.createSpan({text:s,cls:"akl-keyword-name"}),i&&e.createSpan({text:i,cls:"akl-target-name"})}displayGroupsTab(e){let t=e.createDiv({cls:"akl-stats-bar"}),o=this.plugin.settings.keywordGroups.reduce((l,c)=>l+this.plugin.settings.keywords.filter(u=>u.groupId===c.id).length,0);t.createEl("span",{text:`${this.plugin.settings.keywordGroups.length} group${this.plugin.settings.keywordGroups.length!==1?"s":""} \u2022 ${o} keyword${o!==1?"s":""} in groups`});let s=e.createDiv({cls:"akl-section-header"});s.createEl("h3",{text:"Keyword Groups"}),s.createEl("p",{text:"Organize keywords into groups with shared settings. Keywords inherit settings from their group.",cls:"akl-section-desc"});let i=e.createDiv({cls:"akl-groups-container"});this.renderGroups(i),e.createDiv({cls:"akl-add-button-container"}).createEl("button",{text:"+ Create Group",cls:"mod-cta akl-add-button"}).addEventListener("click",()=>{this.plugin.settings.keywordGroups.push({id:$t("grp"),name:"New Group",collapsed:!1,settings:{enableTags:!1,linkScope:"vault-wide",scopeFolder:"",useRelativeLinks:!1,blockRef:"",requireTag:"",onlyInNotesLinkingTo:!1,suggestMode:!1,preventSelfLink:!1}}),this.display()})}displayGeneralTab(e){let t=e.createDiv({cls:"akl-section-header"});t.createEl("h3",{text:"Linking Behavior"}),t.createEl("p",{text:"Configure how keywords are linked in your notes.",cls:"akl-section-desc"}),new N(e).setName("First occurrence only").setDesc("Link only the first mention of each keyword per note").addToggle(r=>r.setValue(this.plugin.settings.firstOccurrenceOnly).onChange(async l=>{this.plugin.settings.firstOccurrenceOnly=l,await this.plugin.saveSettings()})),new N(e).setName("Case sensitive").setDesc("Match keywords with exact case").addToggle(r=>r.setValue(this.plugin.settings.caseSensitive).onChange(async l=>{this.plugin.settings.caseSensitive=l,await this.plugin.saveSettings()})),new N(e).setName("Prevent self-links (global)").setDesc("Prevent keywords from linking on their own target note (applies to all keywords unless overridden per-keyword)").addToggle(r=>r.setValue(this.plugin.settings.preventSelfLinkGlobal).onChange(async l=>{this.plugin.settings.preventSelfLinkGlobal=l,await this.plugin.saveSettings()})),new N(e).setName("Auto-link on save").setDesc("Automatically link keywords when you save a note (requires reload)").addToggle(r=>r.setValue(this.plugin.settings.autoLinkOnSave).onChange(async l=>{this.plugin.settings.autoLinkOnSave=l,await this.plugin.saveSettings(),new ze("Please reload the plugin for this change to take effect")}));let o=e.createDiv({cls:"akl-section-header"});o.createEl("h3",{text:"Note Creation"}),o.createEl("p",{text:"Configure how new notes are created when target notes don't exist.",cls:"akl-section-desc"}),new N(e).setName("Auto-create notes").setDesc("Automatically create target notes if they don't exist").addToggle(r=>r.setValue(this.plugin.settings.autoCreateNotes).onChange(async l=>{this.plugin.settings.autoCreateNotes=l,await this.plugin.saveSettings()}));let i=["",...this.getAllFolders()];new N(e).setName("New note folder").setDesc("Click to search and select folder where new notes will be created").addText(r=>{let l=this.plugin.settings.newNoteFolder||"/ (Root)";r.setValue(l).setPlaceholder("Click to select folder..."),r.inputEl.readOnly=!0,r.inputEl.style.cursor="pointer",r.inputEl.addEventListener("click",()=>{new At(this.app,i,this.plugin.settings.newNoteFolder||"",async u=>{this.plugin.settings.newNoteFolder=u,await this.plugin.saveSettings();let d=u||"/ (Root)";r.setValue(d)}).open()})}),new N(e).setName("New note template").setDesc("Template for auto-created notes. Use {{keyword}} and {{date}} as placeholders.").addTextArea(r=>r.setPlaceholder(`# {{keyword}}
+
+Created: {{date}}`).setValue(this.plugin.settings.newNoteTemplate).onChange(async l=>{this.plugin.settings.newNoteTemplate=l,await this.plugin.saveSettings()}));let n=e.createDiv({cls:"akl-section-header"});n.createEl("h3",{text:"Keyword Suggestion Settings"}),n.createEl("p",{text:"Configure how the keyword suggestion feature works.",cls:"akl-section-desc"}),new N(e).setName("Custom stop words").setDesc("Additional words to exclude from keyword suggestions (comma-separated). These are added to the default stop word list.").addTextArea(r=>{r.setPlaceholder("example, test, demo, sample").setValue((this.plugin.settings.customStopWords||[]).join(", ")).onChange(async l=>{let c=l.split(",").map(u=>u.trim()).filter(u=>u.length>0);this.plugin.settings.customStopWords=c,await this.plugin.saveSettings()}),r.inputEl.rows=4,r.inputEl.cols=50}),new N(e).setName("Reset custom stop words").setDesc("Clear all custom stop words").addButton(r=>r.setButtonText("Reset").onClick(async()=>{this.plugin.settings.customStopWords=[],await this.plugin.saveSettings(),new ze("Custom stop words cleared"),this.display()}))}displayImportExportTab(e){let t=e.createDiv({cls:"akl-section-header"});t.createEl("h3",{text:"Import & Export Keywords"}),t.createEl("p",{text:"Export your keywords to CSV or import keywords from a CSV file.",cls:"akl-section-desc"}),new N(e).setName("Export keywords to CSV").setDesc("Export all keywords and their settings to a CSV file").addButton(s=>s.setButtonText("Export to CSV").setCta().onClick(()=>this.plugin.exportKeywordsToCSV())),new N(e).setName("Import keywords from CSV").setDesc("Import keywords from a CSV file (opens file picker)").addButton(s=>s.setButtonText("Import from CSV").onClick(()=>this.plugin.importKeywordsFromCSV()));let o=e.createDiv({cls:"akl-section-header"});o.createEl("h3",{text:"Statistics"}),o.createEl("p",{text:"View usage statistics for the plugin.",cls:"akl-section-desc"}),new N(e).setName("View statistics").setDesc("See how many links have been created and which notes have been processed").addButton(s=>s.setButtonText("View Statistics").onClick(()=>this.plugin.showStatistics()))}renderKeywords(e){var s;e.empty();let t=this.searchFilter.toLowerCase(),o=0;for(let i=0;i<this.plugin.settings.keywords.length;i++){let n=this.plugin.settings.keywords[i];if(t){let b=n.keyword&&n.keyword.toLowerCase().includes(t),x=n.target&&n.target.toLowerCase().includes(t),y=n.variations&&n.variations.some(q=>q.toLowerCase().includes(t));if(!b&&!x&&!y)continue}o++,n.collapsed===void 0&&(n.collapsed=!1);let r=e.createDiv({cls:"akl-keyword-card"}),l=r.createDiv({cls:"akl-card-header"}),c=l.createDiv({cls:"akl-collapse-btn"});c.innerHTML=n.collapsed?"\u25B6":"\u25BC",c.setAttribute("aria-label",n.collapsed?"Expand":"Collapse"),c.addEventListener("click",async()=>{n.collapsed=!n.collapsed,await this.plugin.saveSettings(),this.display()});let u=l.createDiv({cls:"akl-card-title"}),d=n.keyword||"New Keyword",h=n.target?` \u2192 ${n.target}`:"";u.createSpan({text:d,cls:"akl-keyword-name"}),h&&u.createSpan({text:h,cls:"akl-target-name"});let f=l.createDiv({cls:"akl-card-badges"});if(n.groupId){let b=this.plugin.settings.keywordGroups.find(x=>x.id===n.groupId);b&&f.createSpan({text:`\u{1F4C1} ${b.name}`,cls:"akl-badge akl-badge-group"})}let p=this.plugin.getEffectiveKeywordSettings(n);p.enableTags&&f.createSpan({text:"Tags",cls:"akl-badge akl-badge-tags"}),p.useRelativeLinks&&f.createSpan({text:"MD Links",cls:"akl-badge akl-badge-md-links"}),p.suggestMode&&f.createSpan({text:"Suggest",cls:"akl-badge akl-badge-suggest"});let g=this.plugin.getAliasesForNote(n.target),k=n.variations&&n.variations.length||0,w=g&&g.length||0,L=k+w;L>0&&f.createSpan({text:`${L} var`,cls:"akl-badge akl-badge-variations"});let T=r.createDiv({cls:"akl-card-body"});n.collapsed&&(T.style.display="none");let m=!!n.groupId,v=m?(s=this.plugin.settings.keywordGroups.find(b=>b.id===n.groupId))==null?void 0:s.name:null;new N(T).setName("Keyword").setDesc("The text to search for in your notes").addText(b=>{b.setValue(n.keyword).setPlaceholder("Enter keyword...").onChange(async x=>{this.plugin.settings.keywords[i].keyword=x,await this.plugin.saveSettings(),this.updateCardHeader(u,x,this.plugin.settings.keywords[i].target)}),b.inputEl.addClass("akl-input"),b.inputEl.addEventListener("blur",async()=>{!this.plugin.settings.keywords[i].target&&this.plugin.settings.keywords[i].keyword&&(this.plugin.settings.keywords[i].target=this.plugin.settings.keywords[i].keyword,await this.plugin.saveSettings(),this.display())})}),new N(T).setName("Target note").setDesc("Click to search and select the note to create links to").addText(b=>{let x=this.app.vault.getMarkdownFiles(),y=new Set;for(let A of x)if(y.add(A.basename),A.path.includes("/")){let R=A.path.endsWith(".md")?A.path.slice(0,-3):A.path;y.add(R)}let q=Array.from(y).sort((A,R)=>A.toLowerCase().localeCompare(R.toLowerCase())),$=n.target||"Click to select...";b.setValue($).setPlaceholder("Click to select note..."),b.inputEl.readOnly=!0,b.inputEl.style.cursor="pointer",b.inputEl.addEventListener("click",()=>{new to(this.app,q,n.target||"",async R=>{this.plugin.settings.keywords[i].target=R,await this.plugin.saveSettings(),b.setValue(R),this.updateCardHeader(u,this.plugin.settings.keywords[i].keyword,R)}).open()})}),new N(T).setName("Block reference").setDesc("Optional: Link to a specific block (e.g., ^block-id for abbreviation definitions)").addText(b=>{b.setValue(n.blockRef||"").setPlaceholder("^block-id").onChange(async x=>{let y=x;y=y.replace(/\[\[.*?\]\]/g,""),y&&!y.startsWith("^")&&(y="^"+y),y=y.replace(/\s/g,""),this.plugin.settings.keywords[i].blockRef=y,await this.plugin.saveSettings(),y!==x&&b.setValue(y)}),b.inputEl.setAttribute("autocomplete","off"),b.inputEl.setAttribute("data-no-suggest","true")}),new N(T).setName("Require tag").setDesc("Optional: Only link to target note if it has this tag (e.g., #reviewed or reviewed)").addText(b=>{b.setValue(n.requireTag||"").setPlaceholder("#tag or tag").onChange(async x=>{let y=x.trim();y.startsWith("#")&&(y=y.substring(1)),this.plugin.settings.keywords[i].requireTag=y,await this.plugin.saveSettings()}),b.inputEl.setAttribute("autocomplete","off")}),new N(T).setName("Only link in notes already linking to target").setDesc("Only create keyword links in notes that already have at least one link to the target note").addToggle(b=>{let x=this.plugin.getEffectiveKeywordSettings(n);b.setValue(x.onlyInNotesLinkingTo||!1).onChange(async y=>{this.plugin.settings.keywords[i].onlyInNotesLinkingTo=y,await this.plugin.saveSettings()})});let S=T.createDiv({cls:"akl-variations-section"});S.createEl("div",{text:"Variations",cls:"setting-item-name"}),S.createEl("div",{text:"Alternative spellings that also link to the target note",cls:"setting-item-description"});let E=S.createDiv({cls:"akl-chips-container"}),F=n.variations&&n.variations.length>0,z=g&&g.length>0;!F&&!z?E.createSpan({text:"No variations added yet",cls:"akl-no-variations"}):(this.renderVariationChips(E,n.variations||[],i),z&&this.renderAliasChips(E,g));let C=S.createDiv({cls:"akl-add-variation"}).createEl("input",{type:"text",placeholder:"Type and press Enter to add...",cls:"akl-variation-input"});C.addEventListener("keydown",async b=>{if(b.key==="Enter"){b.preventDefault();let x=C.value.trim();if(!x)return;if(n.variations||(n.variations=[]),n.variations.some(A=>A.toLowerCase()===x.toLowerCase())){new ze("Variation already exists"),C.value="";return}C.value="",n.variations.push(x),await this.plugin.saveSettings(),E.empty();let q=n.variations&&n.variations.length>0,$=g&&g.length>0;!q&&!$?E.createSpan({text:"No variations added yet",cls:"akl-no-variations"}):(this.renderVariationChips(E,n.variations||[],i),$&&this.renderAliasChips(E,g)),C.focus()}});let I=new N(T).setName("Enable tags").setDesc(m?`Inherited from group "${v}"`:"Automatically add tags to source and target notes").addToggle(b=>{let x=this.plugin.getEffectiveKeywordSettings(n);b.setValue(x.enableTags||!1).setDisabled(m).onChange(async y=>{m||(this.plugin.settings.keywords[i].enableTags=y,await this.plugin.saveSettings(),this.display())})});m&&I.settingEl.addClass("akl-disabled-setting");let B=new N(T).setName("Use relative markdown links").setDesc(m?`Inherited from group "${v}"`:"Create markdown links [text](note.md) instead of wikilinks [[note]]").addToggle(b=>{let x=this.plugin.getEffectiveKeywordSettings(n);b.setValue(x.useRelativeLinks||!1).setDisabled(m).onChange(async y=>{m||(this.plugin.settings.keywords[i].useRelativeLinks=y,await this.plugin.saveSettings())})});m&&B.settingEl.addClass("akl-disabled-setting");let M=new N(T).setName("Suggest instead of auto-link").setDesc(m?`Inherited from group "${v}"`:"Highlight keywords as suggestions instead of automatically creating links. Right-click to accept.").addToggle(b=>{let x=this.plugin.getEffectiveKeywordSettings(n);b.setValue(x.suggestMode||!1).setDisabled(m).onChange(async y=>{m||(this.plugin.settings.keywords[i].suggestMode=y,await this.plugin.saveSettings(),this.display())})});m&&M.settingEl.addClass("akl-disabled-setting"),new N(T).setName("Keyword Group").setDesc("Assign to a group to inherit group settings. Group settings will be locked and cannot be overridden per-keyword.").addDropdown(b=>{b.addOption("","(No group)"),this.plugin.settings.keywordGroups.forEach(x=>{b.addOption(x.id,x.name)}),b.setValue(n.groupId||"").onChange(async x=>{this.plugin.settings.keywords[i].groupId=x||null,await this.plugin.saveSettings(),this.display()})});let K=new N(T).setName("Prevent self-link").setDesc(m?`Inherited from group "${v}"`:"Prevent this keyword from linking on its own target note (overrides global setting)").addToggle(b=>{let x=this.plugin.getEffectiveKeywordSettings(n);b.setValue(x.preventSelfLink||!1).setDisabled(m).onChange(async y=>{m||(this.plugin.settings.keywords[i].preventSelfLink=y,await this.plugin.saveSettings())})});m&&K.settingEl.addClass("akl-disabled-setting");let G=new N(T).setName("Link scope").setDesc(m?`Inherited from group "${v}"`:"Control where this keyword will be linked").addDropdown(b=>{let x=this.plugin.getEffectiveKeywordSettings(n);b.addOption("vault-wide","Vault-wide (everywhere)").addOption("same-folder","Same folder only").addOption("source-folder","Source in specific folder").addOption("target-folder","Target in specific folder").setValue(x.linkScope||"vault-wide").setDisabled(m).onChange(async y=>{m||(this.plugin.settings.keywords[i].linkScope=y,await this.plugin.saveSettings(),this.display())})});if(m&&G.settingEl.addClass("akl-disabled-setting"),n.linkScope==="source-folder"||n.linkScope==="target-folder"){let x=["",...this.getAllFolders()];new N(T).setName("Folder").setDesc("Click to search and select a folder").addText(y=>{let q=n.scopeFolder||"/ (Root)";y.setValue(q).setPlaceholder("Click to select folder..."),y.inputEl.readOnly=!0,y.inputEl.style.cursor="pointer",y.inputEl.addEventListener("click",()=>{new At(this.app,x,n.scopeFolder||"",async A=>{this.plugin.settings.keywords[i].scopeFolder=A,await this.plugin.saveSettings();let R=A||"/ (Root)";y.setValue(R)}).open()})})}T.createDiv({cls:"akl-card-footer"}).createEl("button",{text:"Delete Keyword",cls:"akl-delete-btn"}).addEventListener("click",async()=>{this.plugin.settings.keywords.splice(i,1),await this.plugin.saveSettings(),this.display()})}if(o===0&&t){let i=e.createDiv({cls:"akl-no-results"});i.createEl("p",{text:"No keywords found"}),i.createEl("p",{text:`No keywords match "${this.searchFilter}"`,cls:"akl-no-results-hint"})}}renderGroups(e){if(e.empty(),this.plugin.settings.keywordGroups.length===0){let t=e.createDiv({cls:"akl-empty-state"});t.createEl("p",{text:"No groups yet"}),t.createEl("p",{text:"Create a group to organize your keywords with shared settings",cls:"akl-empty-hint"});return}for(let t=0;t<this.plugin.settings.keywordGroups.length;t++){let o=this.plugin.settings.keywordGroups[t];o.collapsed===void 0&&(o.collapsed=!1);let s=this.plugin.settings.keywords.filter(p=>p.groupId===o.id),i=e.createDiv({cls:"akl-keyword-card akl-group-card"}),n=i.createDiv({cls:"akl-card-header"}),r=n.createDiv({cls:"akl-collapse-btn"});r.innerHTML=o.collapsed?"\u25B6":"\u25BC",r.setAttribute("aria-label",o.collapsed?"Expand":"Collapse"),r.addEventListener("click",async()=>{o.collapsed=!o.collapsed,await this.plugin.saveSettings(),this.display()});let l=n.createDiv({cls:"akl-card-title"});l.createSpan({text:o.name,cls:"akl-keyword-name"}),l.createSpan({text:` (${s.length} keywords)`,cls:"akl-target-name"}),n.createEl("button",{text:"\u{1F5D1}\uFE0F Delete",cls:"akl-delete-btn"}).addEventListener("click",async p=>{p.stopPropagation(),this.plugin.settings.keywords.forEach(g=>{g.groupId===o.id&&(g.groupId=null)}),this.plugin.settings.keywordGroups.splice(t,1),await this.plugin.saveSettings(),this.display()});let u=i.createDiv({cls:"akl-card-body"});o.collapsed&&(u.style.display="none"),new N(u).setName("Group name").setDesc("Name for this group of keywords").addText(p=>{p.setValue(o.name).setPlaceholder("Enter group name...").onChange(async g=>{this.plugin.settings.keywordGroups[t].name=g,await this.plugin.saveSettings(),l.empty(),l.createSpan({text:g,cls:"akl-keyword-name"}),l.createSpan({text:` (${s.length} keywords)`,cls:"akl-target-name"})}),p.inputEl.addClass("akl-input")});let d=u.createDiv({cls:"akl-group-keywords-section"});if(d.createEl("h4",{text:"Keywords in this group",cls:"akl-subsection-header"}),s.length===0)d.createEl("p",{text:"No keywords in this group yet. Add keywords below or assign them from the Keywords tab.",cls:"akl-hint-text"});else{let p=d.createDiv({cls:"akl-keywords-list"});s.forEach(g=>{let k=p.createDiv({cls:"akl-keyword-chip"});k.createSpan({text:g.keyword||"Untitled"}),k.createSpan({text:"\xD7",cls:"akl-chip-remove"}).addEventListener("click",async()=>{g.groupId=null,await this.plugin.saveSettings(),this.display()})})}d.createEl("button",{text:"+ Add Keywords to Group",cls:"akl-button-secondary"}).addEventListener("click",()=>{let p=this.plugin.settings.keywords.filter(g=>g.groupId===o.id);new eo(this.app,this.plugin,o.id,p).open()});let f=u.createDiv({cls:"akl-group-settings-section"});f.createEl("h4",{text:"Group Settings",cls:"akl-subsection-header"}),f.createEl("p",{text:"These settings apply to all keywords in this group (unless overridden per-keyword).",cls:"akl-hint-text"}),new N(f).setName("Link scope").setDesc("Where this group's keywords should create links").addDropdown(p=>p.addOption("vault-wide","Vault-wide (link in all notes)").addOption("source-folder","Source folder only").addOption("target-folder","Target folder only").setValue(o.settings.linkScope||"vault-wide").onChange(async g=>{o.settings.linkScope=g,await this.plugin.saveSettings()})),new N(f).setName("Enable tags").setDesc("Add #tag to target notes when linking").addToggle(p=>p.setValue(o.settings.enableTags||!1).onChange(async g=>{o.settings.enableTags=g,await this.plugin.saveSettings()})),new N(f).setName("Suggest mode").setDesc("Suggest links instead of creating them automatically").addToggle(p=>p.setValue(o.settings.suggestMode||!1).onChange(async g=>{o.settings.suggestMode=g,await this.plugin.saveSettings()})),new N(f).setName("Use Markdown links").setDesc("Use [text](link.md) format instead of [[wikilinks]]").addToggle(p=>p.setValue(o.settings.useRelativeLinks||!1).onChange(async g=>{o.settings.useRelativeLinks=g,await this.plugin.saveSettings()})),new N(f).setName("Prevent self-links").setDesc("Don't link keywords on their own target note").addToggle(p=>p.setValue(o.settings.preventSelfLink||!1).onChange(async g=>{o.settings.preventSelfLink=g,await this.plugin.saveSettings()}))}}renderVariationChips(e,t,o){t.length!==0&&t.forEach((s,i)=>{let n=e.createDiv({cls:"akl-chip"});n.createSpan({text:s,cls:"akl-chip-text"});let r=n.createSpan({text:"\xD7",cls:"akl-chip-remove"});r.setAttribute("aria-label",`Remove ${s}`),r.addEventListener("click",async()=>{this.plugin.settings.keywords[o].variations.splice(i,1),await this.plugin.saveSettings(),this.display()})})}renderAliasChips(e,t){!t||t.length===0||t.forEach(o=>{let s=e.createDiv({cls:"akl-chip akl-chip-auto"});s.createSpan({text:o,cls:"akl-chip-text"});let i=s.createSpan({text:"\u{1F517}",cls:"akl-chip-auto-indicator"});i.setAttribute("aria-label","Auto-discovered from note alias"),i.setAttribute("title","Auto-discovered from note frontmatter")})}getAllFolders(){let e=new Set;return this.app.vault.getAllLoadedFiles().filter(o=>o.children).map(o=>o.path).forEach(o=>{o&&o!=="/"&&e.add(o)}),Array.from(e).sort((o,s)=>o.toLowerCase().localeCompare(s.toLowerCase()))}addCustomStyles(){if(document.getElementById("akl-custom-styles"))return;let e=document.createElement("style");e.id="akl-custom-styles",e.textContent=`
             /* Header */
             .akl-header {
                 display: flex;
@@ -3802,3537 +841,825 @@ module.exports = class AutoKeywordLinker extends Plugin {
             .akl-action-row button {
                 padding: 0.6em 1.2em;
             }
-
-            /* Disabled settings (inherited from group) */
-            .akl-disabled-setting {
-                opacity: 0.6;
-            }
-
-            .akl-disabled-setting .setting-item-control {
-                pointer-events: none;
-            }
-
-            .akl-disabled-setting .setting-item-description {
-                font-style: italic;
-                color: var(--text-muted);
-            }
-        `;
-
-        document.head.appendChild(styleEl);
-    }
-}
-
-/**
- * Statistics Modal
- */
-class StatisticsModal extends Modal {
-    constructor(app, settings) {
-        super(app);
-        this.settings = settings;
-    }
-
-    onOpen() {
-        const {contentEl} = this;
-        contentEl.createEl('h2', {text: 'Auto Keyword Linker Statistics'});
-        
-        const stats = this.settings.statistics;
-        
-        contentEl.createEl('p', {
-            text: `Total Links Created: ${stats.totalLinksCreated || 0}`
-        });
-        
-        contentEl.createEl('p', {
-            text: `Total Notes Processed: ${stats.totalNotesProcessed || 0}`
-        });
-        
-        contentEl.createEl('p', {
-            text: `Total Keywords Configured: ${this.settings.keywords.length}`
-        });
-        
-        if (stats.lastRunDate) {
-            const date = new Date(stats.lastRunDate);
-            contentEl.createEl('p', {
-                text: `Last Run: ${date.toLocaleString()}`
-            });
-        }
-        
-        // Keyword usage breakdown
-        contentEl.createEl('h3', {text: 'Configured Keywords'});
-        const list = contentEl.createEl('ul');
-        for (let keyword of this.settings.keywords) {
-            const item = list.createEl('li');
-            item.appendText(`${keyword.keyword} → ${keyword.target}`);
-            if (keyword.variations && keyword.variations.length > 0) {
-                item.appendText(` (${keyword.variations.length} variations)`);
-            }
-            if (keyword.enableTags) {
-                item.appendText(` [Tags enabled]`);
-            }
-        }
-        
-        const closeBtn = contentEl.createEl('button', {text: 'Close'});
-        closeBtn.style.marginTop = '20px';
-        closeBtn.addEventListener('click', () => this.close());
-    }
-
-    onClose() {
-        const {contentEl} = this;
-        contentEl.empty();
-    }
-}
-
-/**
- * Suggested Keyword Builder Modal
- * Analyzes notes and suggests keywords to add
- */
-class SuggestedKeywordBuilderModal extends Modal {
-    constructor(app, plugin, currentFile = null) {
-        super(app);
-        this.plugin = plugin;
-        this.currentFile = currentFile; // If provided, analyze only this file
-        this.suggestions = [];
-        this.selectedSuggestions = new Map(); // keyword -> { selected: boolean, addAsVariationTo: string|null }
-        this.isAnalyzing = true;
-        this.searchQuery = '';
-        this.sortOrder = 'frequency-desc'; // Default sort order
-    }
-
-    async onOpen() {
-        const {contentEl} = this;
-        contentEl.addClass('akl-suggestion-modal');
-
-        // Title
-        const titleText = this.currentFile
-            ? `Suggested Keyword Builder - ${this.currentFile.basename}`
-            : 'Suggested Keyword Builder';
-        contentEl.createEl('h2', {text: titleText});
-
-        // Status area
-        const statusEl = contentEl.createDiv({cls: 'akl-status'});
-        const analyzeText = this.currentFile
-            ? 'Analyzing current note...'
-            : 'Analyzing your notes...';
-        statusEl.createEl('p', {text: analyzeText, cls: 'akl-analyzing'});
-
-        // Start analysis
-        try {
-            // Use different analysis method based on scope
-            if (this.currentFile) {
-                this.suggestions = await this.plugin.analyzeCurrentNoteForKeywords(this.currentFile);
-            } else {
-                this.suggestions = await this.plugin.analyzeNotesForKeywords();
-            }
-            this.isAnalyzing = false;
-
-            // Update status
-            statusEl.empty();
-            const noteCount = this.currentFile ? 1 : this.plugin.app.vault.getMarkdownFiles().length;
-            const noteText = noteCount === 1 ? 'note' : 'notes';
-            statusEl.createEl('p', {
-                text: `Found ${this.suggestions.length} suggestions from ${noteCount} ${noteText}`,
-                cls: 'akl-stats'
-            });
-
-            // Initialize selection state
-            for (let suggestion of this.suggestions) {
-                this.selectedSuggestions.set(suggestion.keyword, {
-                    selected: false,
-                    addAsVariationTo: null
-                });
-            }
-
-            // Render the suggestions UI
-            this.renderSuggestions(contentEl);
-
-        } catch (error) {
-            statusEl.empty();
-            statusEl.createEl('p', {
-                text: `Error analyzing notes: ${error.message}`,
-                cls: 'akl-error'
-            });
-            console.error('Error analyzing notes:', error);
-        }
-    }
-
-    renderSuggestions(container) {
-        // Search and sort controls
-        const controlsContainer = container.createDiv({cls: 'akl-controls-container'});
-
-        // Search box
-        const searchContainer = controlsContainer.createDiv({cls: 'akl-search-container'});
-        const searchInput = searchContainer.createEl('input', {
-            type: 'text',
-            placeholder: 'Search suggestions...',
-            cls: 'akl-search-input'
-        });
-        searchInput.value = this.searchQuery;
-        searchInput.addEventListener('input', (e) => {
-            this.searchQuery = e.target.value;
-            this.refreshSuggestionList();
-        });
-
-        // Sort order dropdown
-        const sortContainer = controlsContainer.createDiv({cls: 'akl-sort-container'});
-        const sortLabel = sortContainer.createEl('label', {
-            text: 'Sort by: ',
-            cls: 'akl-sort-label'
-        });
-        const sortSelect = sortContainer.createEl('select', {cls: 'akl-sort-select'});
-
-        const sortOptions = [
-            { value: 'frequency-desc', label: 'Most Common First' },
-            { value: 'frequency-asc', label: 'Least Common First' },
-            { value: 'alpha-asc', label: 'A to Z' },
-            { value: 'alpha-desc', label: 'Z to A' },
-            { value: 'length-asc', label: 'Shortest First' },
-            { value: 'length-desc', label: 'Longest First' }
-        ];
-
-        for (let option of sortOptions) {
-            const optionEl = sortSelect.createEl('option', {
-                value: option.value,
-                text: option.label
-            });
-            if (option.value === this.sortOrder) {
-                optionEl.selected = true;
-            }
+        `,document.head.appendChild(e)}};It.exports=Be});var Re=D((ja,zt)=>{var{Notice:Nt,Menu:Me,MarkdownView:J}=require("obsidian"),{escapeRegex:Ke}=(W(),P(U));function so(a,e){e.querySelectorAll(".akl-suggested-link").forEach(o=>{o.addEventListener("click",s=>{s.preventDefault(),s.stopPropagation(),new Nt("Switch to edit mode to accept suggestions, or use the review modal")}),o.addEventListener("contextmenu",s=>{s.preventDefault(),s.stopPropagation();let i=new Me;i.addItem(n=>{n.setTitle("\u{1F4CB} Review link suggestions (opens in edit mode)").setIcon("list-checks").onClick(async()=>{let r=a.app.workspace.getActiveViewOfType(J);r&&(await r.setState({mode:"source"},{}),setTimeout(()=>{var c;let l=(c=a.app.workspace.getActiveViewOfType(J))==null?void 0:c.editor;l&&a.reviewSuggestions(l)},100))})}),i.showAtMouseEvent(s)})})}function Dt(a){var n;if(!a.statusBarItem)return;let e=(n=a.app.workspace.getActiveViewOfType(J))==null?void 0:n.editor;if(!e){a.statusBarItem.setText(""),a.statusBarItem.style.display="none";return}let t=e.getValue(),o=/<span class="akl-suggested-link"[^>]*>([^<]+)<\/span>/g,s=t.match(o),i=s?s.length:0;i>0?(a.statusBarItem.setText(`\u{1F4A1} ${i} link suggestion${i>1?"s":""}`),a.statusBarItem.style.cursor="pointer",a.statusBarItem.style.display="inline-block",a.statusBarItem.addClass("mod-clickable"),a.statusBarItem.setAttribute("aria-label","Click to review suggestions"),a.statusBarItem.onclick=()=>{var l;let r=(l=a.app.workspace.getActiveViewOfType(J))==null?void 0:l.editor;r&&a.reviewSuggestions(r)}):(a.statusBarItem.setText(""),a.statusBarItem.style.display="none",a.statusBarItem.onclick=null)}function oo(a){a.registerDomEvent(document,"contextmenu",e=>{let t=e.target;if(t&&t.classList&&t.classList.contains("akl-suggested-link")){e.preventDefault();let o=new Me;o.addItem(s=>{s.setTitle("Accept link suggestion").setIcon("check").onClick(()=>{a.acceptSuggestionElement(t)})}),o.showAtMouseEvent(e)}})}function ao(a){a.registerDomEvent(document,"click",e=>{let t=a.app.workspace.getActiveViewOfType(J);if(!t)return;let o=t.editor;if(!o)return;let s=e.target,i=null;if(s.classList&&s.classList.contains("akl-suggested-link")?i=s:s.parentElement&&s.parentElement.classList&&s.parentElement.classList.contains("akl-suggested-link")&&(i=s.parentElement),i){e.preventDefault(),e.stopPropagation();let n=o.getCursor(),r=o.getLine(n.line);Ve(a,o,n.line,r,e)}}),a.registerDomEvent(document,"contextmenu",e=>{let t=a.app.workspace.getActiveViewOfType(J);if(!t)return;let o=t.editor;if(!o)return;let s=e.target,i=null;if(s.classList&&s.classList.contains("akl-suggested-link")?i=s:s.parentElement&&s.parentElement.classList&&s.parentElement.classList.contains("akl-suggested-link")&&(i=s.parentElement),i){e.preventDefault(),e.stopPropagation();let n=o.getCursor(),r=o.getLine(n.line);Ve(a,o,n.line,r,e)}})}function Ve(a,e,t,o,s){let i=/<span class="akl-suggested-link" data-target="([^"]*)" data-block="([^"]*)" data-use-relative="([^"]*)"[^>]*>([^<]+)<\/span>/g,n=[...o.matchAll(i)];if(n.length===0)return;let r=n[0],l=r[1],c=r[2],u=r[3]==="true",d=r[4],h=new Me;h.addItem(f=>{f.setTitle(`Accept link suggestion: "${d}"`).setIcon("check").onClick(()=>{Ft(a,e,t,o,d,l,c,u)})}),h.showAtMouseEvent(s)}function Ft(a,e,t,o,s,i,n,r){let l=new RegExp(`<span class="akl-suggested-link" data-target="${Ke(i)}" data-block="${Ke(n)}" data-use-relative="${r?"true":"false"}"[^>]*>${Ke(s)}</span>`);if(!l.test(o))return;let c=e.getValue(),u=e.posToOffset({line:t,ch:0}),d=a.isInsideTable(c,u),h,f=n?`${i}#${n}`:i;if(r){let g=d?s.replace(/\|/g,"\\|"):s,k=encodeURIComponent(i)+".md",w=n?`#${n}`:"";h=`[${g}](${k}${w})`}else d?h=i===s&&!n?`[[${s}]]`:`[[${f}\\|${s}]]`:h=i===s&&!n?`[[${s}]]`:`[[${f}|${s}]]`;let p=o.replace(l,h);e.setLine(t,p),new Nt("Link suggestion accepted"),setTimeout(()=>Dt(a),100)}zt.exports={processSuggestedLinks:so,updateStatusBar:Dt,setupSuggestionContextMenu:oo,setupLivePreviewClickHandler:ao,showSuggestionMenuAtLine:Ve,acceptSuggestionInLine:Ft}});var Kt=D((Ha,Bt)=>{function no(){if(document.getElementById("akl-custom-styles"))return;let a=document.createElement("style");a.id="akl-custom-styles",a.textContent=`
+        /* Header */
+        .akl-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5em;
+            flex-wrap: wrap;
+            gap: 0.5em;
         }
 
-        sortSelect.addEventListener('change', (e) => {
-            this.sortOrder = e.target.value;
-            this.refreshSuggestionList();
-        });
-
-        // Selection buttons
-        const buttonRow = container.createDiv({cls: 'akl-button-row'});
-        const selectAllBtn = buttonRow.createEl('button', {text: 'Select All', cls: 'akl-mini-button'});
-        selectAllBtn.addEventListener('click', () => {
-            for (let [keyword, state] of this.selectedSuggestions) {
-                if (this.matchesSearch(keyword)) {
-                    state.selected = true;
-                }
-            }
-            this.refreshSuggestionList();
-        });
-
-        const deselectAllBtn = buttonRow.createEl('button', {text: 'Deselect All', cls: 'akl-mini-button'});
-        deselectAllBtn.addEventListener('click', () => {
-            for (let [keyword, state] of this.selectedSuggestions) {
-                if (this.matchesSearch(keyword)) {
-                    state.selected = false;
-                }
-            }
-            this.refreshSuggestionList();
-        });
-
-        // Suggestions list container
-        this.suggestionsListEl = container.createDiv({cls: 'akl-suggestions-list'});
-        this.refreshSuggestionList();
-
-        // Action buttons
-        const actionRow = container.createDiv({cls: 'akl-action-row'});
-
-        const addBtn = actionRow.createEl('button', {text: 'Add Selected Keywords', cls: 'mod-cta'});
-        addBtn.addEventListener('click', () => this.addSelectedKeywords());
-
-        const cancelBtn = actionRow.createEl('button', {text: 'Cancel'});
-        cancelBtn.addEventListener('click', () => this.close());
-    }
-
-    matchesSearch(keyword) {
-        if (!this.searchQuery) return true;
-        return keyword.toLowerCase().includes(this.searchQuery.toLowerCase());
-    }
-
-    sortSuggestions(suggestions) {
-        const sorted = [...suggestions]; // Create a copy to avoid mutating original
-
-        switch (this.sortOrder) {
-            case 'frequency-desc':
-                // Most common first (most notes)
-                sorted.sort((a, b) => b.totalNotes - a.totalNotes);
-                break;
-
-            case 'frequency-asc':
-                // Least common first (fewest notes)
-                sorted.sort((a, b) => a.totalNotes - b.totalNotes);
-                break;
-
-            case 'alpha-asc':
-                // A to Z
-                sorted.sort((a, b) => a.keyword.localeCompare(b.keyword));
-                break;
-
-            case 'alpha-desc':
-                // Z to A
-                sorted.sort((a, b) => b.keyword.localeCompare(a.keyword));
-                break;
-
-            case 'length-asc':
-                // Shortest first
-                sorted.sort((a, b) => a.keyword.length - b.keyword.length);
-                break;
-
-            case 'length-desc':
-                // Longest first
-                sorted.sort((a, b) => b.keyword.length - a.keyword.length);
-                break;
-
-            default:
-                // Default to frequency descending
-                sorted.sort((a, b) => b.totalNotes - a.totalNotes);
+        .akl-stats {
+            color: var(--text-muted);
+            font-size: 0.9em;
+            padding: 0.25em 0.75em;
+            background: var(--background-secondary);
+            border-radius: 12px;
         }
 
-        return sorted;
-    }
-
-    refreshSuggestionList() {
-        if (!this.suggestionsListEl) return;
-
-        this.suggestionsListEl.empty();
-
-        // Filter suggestions based on search
-        let filteredSuggestions = this.suggestions.filter(s => this.matchesSearch(s.keyword));
-
-        if (filteredSuggestions.length === 0) {
-            this.suggestionsListEl.createEl('p', {
-                text: 'No suggestions match your search.',
-                cls: 'akl-no-results'
-            });
-            return;
+        /* Tab Navigation */
+        .akl-tab-nav {
+            display: flex;
+            gap: 0.5em;
+            margin-bottom: 1.5em;
+            border-bottom: 2px solid var(--background-modifier-border);
+            padding-bottom: 0;
         }
 
-        // Sort suggestions based on selected sort order
-        filteredSuggestions = this.sortSuggestions(filteredSuggestions);
-
-        // Render each suggestion
-        for (let suggestion of filteredSuggestions) {
-            const state = this.selectedSuggestions.get(suggestion.keyword);
-
-            const itemDiv = this.suggestionsListEl.createDiv({cls: 'akl-suggestion-item'});
-
-            // Checkbox and label
-            const headerDiv = itemDiv.createDiv({cls: 'akl-suggestion-header'});
-
-            const checkbox = headerDiv.createEl('input', {type: 'checkbox', cls: 'akl-checkbox'});
-            checkbox.checked = state.selected;
-            checkbox.addEventListener('change', (e) => {
-                state.selected = e.target.checked;
-            });
-
-            const labelDiv = headerDiv.createDiv({cls: 'akl-suggestion-label'});
-            labelDiv.createSpan({text: suggestion.keyword, cls: 'akl-keyword-text'});
-            labelDiv.createSpan({text: ` (${suggestion.totalNotes} notes)`, cls: 'akl-count-text'});
-
-            // Notes preview
-            if (suggestion.notes.length > 0) {
-                const notesDiv = itemDiv.createDiv({cls: 'akl-notes-preview'});
-                notesDiv.createEl('span', {text: 'In: ', cls: 'akl-notes-label'});
-                notesDiv.createEl('span', {
-                    text: suggestion.notes.join(', ') + (suggestion.totalNotes > 5 ? '...' : ''),
-                    cls: 'akl-notes-list'
-                });
-            }
-
-            // Variation selector
-            const variationDiv = itemDiv.createDiv({cls: 'akl-variation-selector'});
-            variationDiv.createEl('span', {text: 'Or add as variation to: ', cls: 'akl-variation-label'});
-
-            const select = variationDiv.createEl('select', {cls: 'akl-variation-dropdown'});
-            const noneOption = select.createEl('option', {value: '', text: '(None - add as new keyword)'});
-
-            // Add existing keywords as options
-            for (let existingKeyword of this.plugin.settings.keywords) {
-                if (existingKeyword.keyword.toLowerCase() !== suggestion.keyword.toLowerCase()) {
-                    select.createEl('option', {
-                        value: existingKeyword.keyword,
-                        text: existingKeyword.keyword
-                    });
-                }
-            }
-
-            select.value = state.addAsVariationTo || '';
-            select.addEventListener('change', (e) => {
-                state.addAsVariationTo = e.target.value || null;
-                if (e.target.value) {
-                    checkbox.checked = true;
-                    state.selected = true;
-                }
-            });
-        }
-    }
-
-    async addSelectedKeywords() {
-        let addedCount = 0;
-        let variationCount = 0;
-
-        for (let [keyword, state] of this.selectedSuggestions) {
-            if (!state.selected) continue;
-
-            if (state.addAsVariationTo) {
-                // Add as variation to existing keyword
-                const existingKeyword = this.plugin.settings.keywords.find(
-                    k => k.keyword === state.addAsVariationTo
-                );
-                if (existingKeyword) {
-                    if (!existingKeyword.variations) {
-                        existingKeyword.variations = [];
-                    }
-                    if (!existingKeyword.variations.includes(keyword)) {
-                        existingKeyword.variations.push(keyword);
-                        variationCount++;
-                    }
-                }
-            } else {
-                // Add as new keyword
-                this.plugin.settings.keywords.push({
-                    keyword: keyword,
-                    target: keyword,
-                    variations: [],
-                    enableTags: false,
-                    linkScope: 'vault-wide',
-                    scopeFolder: ''
-                });
-                addedCount++;
-            }
+        .akl-tab-button {
+            padding: 0.75em 1.25em;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.95em;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            margin-bottom: -2px;
         }
 
-        // Save settings
-        await this.plugin.saveSettings();
-
-        // Show result
-        let message = '';
-        if (addedCount > 0 && variationCount > 0) {
-            message = `Added ${addedCount} new keyword(s) and ${variationCount} variation(s)`;
-        } else if (addedCount > 0) {
-            message = `Added ${addedCount} new keyword(s)`;
-        } else if (variationCount > 0) {
-            message = `Added ${variationCount} variation(s)`;
-        } else {
-            message = 'No keywords selected';
+        .akl-tab-button:hover {
+            color: var(--text-normal);
+            background: var(--background-modifier-hover);
         }
 
-        new Notice(message);
-        this.close();
-    }
-
-    onClose() {
-        const {contentEl} = this;
-        contentEl.empty();
-    }
-}
-
-/**
- * Import Modal
- */
-class ImportModal extends Modal {
-    constructor(app, plugin) {
-        super(app);
-        this.plugin = plugin;
-    }
-
-    onOpen() {
-        const {contentEl} = this;
-        contentEl.createEl('h2', {text: 'Import Keywords from JSON'});
-        
-        contentEl.createEl('p', {
-            text: 'Select a JSON file from your vault to import keywords. This will ADD to your existing keywords.'
-        });
-        
-        // Get all JSON files in vault
-        const jsonFiles = this.app.vault.getFiles().filter(f => f.extension === 'json');
-        
-        if (jsonFiles.length === 0) {
-            contentEl.createEl('p', {
-                text: 'No JSON files found in vault. Please create an export first.',
-                cls: 'mod-warning'
-            });
-            
-            const closeBtn = contentEl.createEl('button', {text: 'Close'});
-            closeBtn.addEventListener('click', () => this.close());
-            return;
-        }
-        
-        const dropdown = contentEl.createEl('select');
-        dropdown.style.width = '100%';
-        dropdown.style.marginBottom = '10px';
-        
-        for (let file of jsonFiles) {
-            const option = dropdown.createEl('option', {
-                text: file.path,
-                value: file.path
-            });
-        }
-        
-        const buttonDiv = contentEl.createDiv();
-        buttonDiv.style.display = 'flex';
-        buttonDiv.style.gap = '10px';
-        buttonDiv.style.marginTop = '20px';
-        
-        const importBtn = buttonDiv.createEl('button', {text: 'Import', cls: 'mod-cta'});
-        importBtn.addEventListener('click', async () => {
-            const selectedPath = dropdown.value;
-            const file = this.app.vault.getAbstractFileByPath(selectedPath);
-            
-            if (file) {
-                try {
-                    const content = await this.app.vault.read(file);
-                    const imported = JSON.parse(content);
-                    
-                    if (!Array.isArray(imported)) {
-                        new Notice('Invalid JSON format: expected an array of keywords');
-                        return;
-                    }
-                    
-                    // Add imported keywords to existing ones, checking for duplicates
-                    let addedCount = 0;
-                    let mergedCount = 0;
-
-                    for (let item of imported) {
-                        // Ensure enableTags field exists
-                        if (item.enableTags === undefined) {
-                            item.enableTags = false;
-                        }
-
-                        // Check if this keyword already exists (case-insensitive)
-                        const existingIndex = this.plugin.settings.keywords.findIndex(
-                            k => k.keyword.toLowerCase() === item.keyword.toLowerCase()
-                        );
-
-                        if (existingIndex !== -1) {
-                            // Keyword exists - merge variations
-                            const existing = this.plugin.settings.keywords[existingIndex];
-
-                            // Ensure variations arrays exist
-                            if (!existing.variations) existing.variations = [];
-                            if (!item.variations) item.variations = [];
-
-                            // Merge variations, avoiding duplicates (case-insensitive)
-                            const existingVariationsLower = existing.variations.map(v => v.toLowerCase());
-                            const newVariations = item.variations.filter(
-                                v => !existingVariationsLower.includes(v.toLowerCase())
-                            );
-
-                            if (newVariations.length > 0) {
-                                existing.variations.push(...newVariations);
-                                mergedCount++;
-                            }
-                        } else {
-                            // New keyword - add it
-                            this.plugin.settings.keywords.push(item);
-                            addedCount++;
-                        }
-                    }
-                    
-                    await this.plugin.saveSettings();
-
-                    // Build informative message
-                    let message = '';
-                    if (addedCount > 0 && mergedCount > 0) {
-                        message = `Imported: ${addedCount} new keyword(s), merged variations into ${mergedCount} existing keyword(s)`;
-                    } else if (addedCount > 0) {
-                        message = `Imported ${addedCount} new keyword(s)`;
-                    } else if (mergedCount > 0) {
-                        message = `Merged variations into ${mergedCount} existing keyword(s)`;
-                    } else {
-                        message = `No new keywords or variations to import`;
-                    }
-
-                    new Notice(message);
-                    this.close();
-                    
-                    // Refresh settings tab if open
-                    this.app.setting.close();
-                    this.app.setting.open();
-                    this.app.setting.openTabById(this.plugin.manifest.id);
-                } catch (error) {
-                    new Notice(`Import failed: ${error.message}`);
-                }
-            }
-        });
-        
-        const closeBtn = buttonDiv.createEl('button', {text: 'Cancel'});
-        closeBtn.addEventListener('click', () => this.close());
-    }
-
-    onClose() {
-        const {contentEl} = this;
-        contentEl.empty();
-    }
-}
-
-/**
- * Import CSV Modal
- */
-class ImportCSVModal extends Modal {
-    constructor(app, plugin) {
-        super(app);
-        this.plugin = plugin;
-    }
-
-    onOpen() {
-        const {contentEl} = this;
-        contentEl.createEl('h2', {text: 'Import Keywords from CSV'});
-
-        contentEl.createEl('p', {
-            text: 'Select a CSV file from your vault to import keywords. This will ADD to your existing keywords.'
-        });
-
-        // Get all CSV files in vault
-        const csvFiles = this.app.vault.getFiles().filter(f => f.extension === 'csv');
-
-        if (csvFiles.length === 0) {
-            contentEl.createEl('p', {
-                text: 'No CSV files found in vault. Download a template first or export existing keywords.',
-                cls: 'mod-warning'
-            });
-
-            const closeBtn = contentEl.createEl('button', {text: 'Close'});
-            closeBtn.addEventListener('click', () => this.close());
-            return;
+        .akl-tab-active {
+            color: var(--interactive-accent) !important;
+            border-bottom-color: var(--interactive-accent) !important;
         }
 
-        const dropdown = contentEl.createEl('select');
-        dropdown.style.width = '100%';
-        dropdown.style.marginBottom = '10px';
-
-        for (let file of csvFiles) {
-            const option = dropdown.createEl('option', {
-                text: file.path,
-                value: file.path
-            });
-        }
-
-        const buttonDiv = contentEl.createDiv();
-        buttonDiv.style.display = 'flex';
-        buttonDiv.style.gap = '10px';
-        buttonDiv.style.marginTop = '20px';
-
-        const importBtn = buttonDiv.createEl('button', {text: 'Import', cls: 'mod-cta'});
-        importBtn.addEventListener('click', async () => {
-            const selectedPath = dropdown.value;
-            const file = this.app.vault.getAbstractFileByPath(selectedPath);
-
-            if (file) {
-                try {
-                    const content = await this.app.vault.read(file);
-                    const lines = content.split('\n').filter(line => line.trim());
-
-                    if (lines.length === 0) {
-                        new Notice('CSV file is empty');
-                        return;
-                    }
-
-                    // Parse header
-                    const headers = this.plugin.parseCSVLine(lines[0]);
-                    const headerMap = {};
-                    headers.forEach((header, index) => {
-                        headerMap[header.toLowerCase()] = index;
-                    });
-
-                    // Validate required headers
-                    if (headerMap['keyword'] === undefined || headerMap['target'] === undefined) {
-                        new Notice('CSV must have "keyword" and "target" columns');
-                        return;
-                    }
-
-                    let addedCount = 0;
-                    let mergedCount = 0;
-                    let errorCount = 0;
-                    const errors = [];
-
-                    // Parse data rows
-                    for (let i = 1; i < lines.length; i++) {
-                        const lineNum = i + 1;
-                        try {
-                            const fields = this.plugin.parseCSVLine(lines[i]);
-
-                            // Skip empty rows
-                            if (fields.length === 0 || !fields[headerMap['keyword']]) {
-                                continue;
-                            }
-
-                            const keyword = fields[headerMap['keyword']] || '';
-                            const target = fields[headerMap['target']] || '';
-
-                            if (!keyword.trim() || !target.trim()) {
-                                errors.push(`Line ${lineNum}: Missing keyword or target`);
-                                errorCount++;
-                                continue;
-                            }
-
-                            // Parse variations (pipe-separated)
-                            const variationsStr = fields[headerMap['variations']] || '';
-                            const variations = variationsStr
-                                ? variationsStr.split('|').map(v => v.trim()).filter(v => v)
-                                : [];
-
-                            // Parse boolean fields
-                            const parseBool = (value) => {
-                                if (typeof value === 'boolean') return value;
-                                const str = String(value).toLowerCase().trim();
-                                return str === 'true' || str === 'yes' || str === '1';
-                            };
-
-                            // Build keyword object
-                            const keywordObj = {
-                                keyword: keyword.trim(),
-                                target: target.trim(),
-                                variations: variations,
-                                enableTags: parseBool(fields[headerMap['enabletags']] || false),
-                                linkScope: fields[headerMap['linkscope']] || 'vault-wide',
-                                scopeFolder: fields[headerMap['scopefolder']] || '',
-                                useRelativeLinks: parseBool(fields[headerMap['userelativelinks']] || false),
-                                blockRef: fields[headerMap['blockref']] || '',
-                                requireTag: fields[headerMap['requiretag']] || '',
-                                onlyInNotesLinkingTo: parseBool(fields[headerMap['onlyinnoteslinkingto']] || false),
-                                suggestMode: parseBool(fields[headerMap['suggestmode']] || false),
-                                preventSelfLink: parseBool(fields[headerMap['preventselflink']] || false)
-                            };
-
-                            // Check if keyword already exists
-                            const existingIndex = this.plugin.settings.keywords.findIndex(
-                                k => k.keyword.toLowerCase() === keywordObj.keyword.toLowerCase()
-                            );
-
-                            if (existingIndex !== -1) {
-                                // Merge variations into existing keyword
-                                const existing = this.plugin.settings.keywords[existingIndex];
-                                const existingVars = new Set(existing.variations.map(v => v.toLowerCase()));
-
-                                let addedVars = false;
-                                for (let variation of keywordObj.variations) {
-                                    if (!existingVars.has(variation.toLowerCase())) {
-                                        existing.variations.push(variation);
-                                        addedVars = true;
-                                    }
-                                }
-
-                                if (addedVars) {
-                                    mergedCount++;
-                                }
-                            } else {
-                                // Add new keyword
-                                this.plugin.settings.keywords.push(keywordObj);
-                                addedCount++;
-                            }
-
-                        } catch (rowError) {
-                            errors.push(`Line ${lineNum}: ${rowError.message}`);
-                            errorCount++;
-                        }
-                    }
-
-                    // Save settings
-                    await this.plugin.saveSettings();
-
-                    // Build result message
-                    let message = '';
-                    if (addedCount > 0 && mergedCount > 0) {
-                        message = `Imported: ${addedCount} new keyword(s), merged variations into ${mergedCount} existing keyword(s)`;
-                    } else if (addedCount > 0) {
-                        message = `Imported ${addedCount} new keyword(s)`;
-                    } else if (mergedCount > 0) {
-                        message = `Merged variations into ${mergedCount} existing keyword(s)`;
-                    } else {
-                        message = `No new keywords or variations to import`;
-                    }
-
-                    if (errorCount > 0) {
-                        message += `\n${errorCount} error(s) encountered`;
-                        console.error('CSV Import Errors:', errors);
-                    }
-
-                    new Notice(message);
-                    this.close();
-
-                    // Refresh settings tab if open
-                    this.app.setting.close();
-                    this.app.setting.open();
-                    this.app.setting.openTabById(this.plugin.manifest.id);
-
-                } catch (error) {
-                    new Notice(`Import failed: ${error.message}`);
-                    console.error('CSV Import Error:', error);
-                }
-            }
-        });
-
-        const closeBtn = buttonDiv.createEl('button', {text: 'Cancel'});
-        closeBtn.addEventListener('click', () => this.close());
-    }
-
-    onClose() {
-        const {contentEl} = this;
-        contentEl.empty();
-    }
-}
-
-/**
- * Modal for previewing changes to a single note
- */
-class PreviewModal extends Modal {
-    /**
-     * @param {App} app - Obsidian app instance
-     * @param {Object} results - Results object from linkKeywordsInFile
-     * @param {string} fileName - Name of the file being previewed
-     */
-    constructor(app, results, fileName) {
-        super(app);
-        this.results = results;
-        this.fileName = fileName;
-    }
-
-    /**
-     * Called when the modal is opened
-     * Builds the modal content
-     */
-    onOpen() {
-        const {contentEl} = this;
-        
-        // Add title showing which file is being previewed
-        contentEl.createEl('h2', {text: `Preview: ${this.fileName}`});
-        
-        // Show count of keywords found
-        contentEl.createEl('p', {text: `Found ${this.results.linkCount} keyword(s) to link:`});
-        
-        // Create list of changes
-        const list = contentEl.createEl('ul');
-        for (let change of this.results.changes) {
-            const item = list.createEl('li');
-            
-            // Show the keyword in bold
-            item.createEl('strong', {text: change.keyword});
-            item.appendText(` → `);
-            
-            // Show what it will be linked to
-            item.createEl('code', {text: `[[${change.target}]]`});
-            item.createEl('br');
-            
-            // Show surrounding context
-            item.createEl('small', {text: change.context, cls: 'preview-context'});
-        }
-        
-        // Create button container
-        const buttonDiv = contentEl.createDiv({cls: 'modal-button-container'});
-        buttonDiv.style.marginTop = '20px';
-        buttonDiv.style.display = 'flex';
-        buttonDiv.style.gap = '10px';
-        
-        // Add close button
-        const closeBtn = buttonDiv.createEl('button', {text: 'Close'});
-        closeBtn.addEventListener('click', () => this.close());
-    }
-
-    /**
-     * Called when the modal is closed
-     * Clean up the modal content
-     */
-    onClose() {
-        const {contentEl} = this;
-        contentEl.empty();
-    }
-}
-
-/**
- * Modal for reviewing and accepting link suggestions
- */
-class SuggestionReviewModal extends Modal {
-    constructor(app, editor, suggestions) {
-        super(app);
-        this.editor = editor;
-        this.suggestions = suggestions; // Array of {line, matchText, targetNote, blockRef, useRelative, fullMatch}
-        this.selectedSuggestions = new Set(suggestions.map((_, i) => i)); // All selected by default
-    }
-
-    onOpen() {
-        const {contentEl} = this;
-        contentEl.empty();
-        contentEl.addClass('akl-suggestion-review-modal');
-
-        // Title
-        contentEl.createEl('h2', {text: 'Review Link Suggestions'});
-
-        // Description
-        const desc = contentEl.createEl('p', {
-            text: `Found ${this.suggestions.length} link suggestion${this.suggestions.length > 1 ? 's' : ''} in this note. Select which ones to accept:`
-        });
-        desc.style.marginBottom = '1em';
-        desc.style.color = 'var(--text-muted)';
-
-        // Select all / Deselect all buttons
-        const buttonContainer = contentEl.createDiv({cls: 'akl-button-container'});
-        buttonContainer.style.marginBottom = '1em';
-        buttonContainer.style.display = 'flex';
-        buttonContainer.style.gap = '0.5em';
-
-        const selectAllBtn = buttonContainer.createEl('button', {text: 'Select All'});
-        selectAllBtn.addEventListener('click', () => {
-            this.suggestions.forEach((_, i) => {
-                this.selectedSuggestions.add(i);
-                const checkbox = contentEl.querySelector(`input[data-index="${i}"]`);
-                if (checkbox) checkbox.checked = true;
-            });
-        });
-
-        const deselectAllBtn = buttonContainer.createEl('button', {text: 'Deselect All'});
-        deselectAllBtn.addEventListener('click', () => {
-            this.selectedSuggestions.clear();
-            contentEl.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
-        });
-
-        // Suggestions list
-        const listContainer = contentEl.createDiv({cls: 'akl-suggestions-list'});
-        listContainer.style.maxHeight = '400px';
-        listContainer.style.overflowY = 'auto';
-        listContainer.style.marginBottom = '1em';
-        listContainer.style.border = '1px solid var(--background-modifier-border)';
-        listContainer.style.borderRadius = '6px';
-        listContainer.style.padding = '0.5em';
-
-        this.suggestions.forEach((suggestion, index) => {
-            const item = listContainer.createDiv({cls: 'akl-suggestion-item'});
-            item.style.padding = '0.75em';
-            item.style.marginBottom = '0.5em';
-            item.style.background = 'var(--background-secondary)';
-            item.style.borderRadius = '6px';
-            item.style.display = 'flex';
-            item.style.alignItems = 'center';
-            item.style.gap = '0.75em';
-
-            // Checkbox
-            const checkbox = item.createEl('input', {type: 'checkbox'});
-            checkbox.checked = true;
-            checkbox.setAttribute('data-index', index.toString());
-            checkbox.addEventListener('change', (e) => {
-                if (e.target.checked) {
-                    this.selectedSuggestions.add(index);
-                } else {
-                    this.selectedSuggestions.delete(index);
-                }
-            });
-
-            // Content
-            const content = item.createDiv({cls: 'akl-suggestion-content'});
-            content.style.flex = '1';
-
-            // Keyword and target
-            const keywordLine = content.createDiv();
-            keywordLine.style.marginBottom = '0.25em';
-            keywordLine.createSpan({text: suggestion.matchText, cls: 'akl-keyword-highlight'});
-            keywordLine.createSpan({text: ' → ', cls: 'akl-arrow'});
-            keywordLine.createSpan({text: suggestion.targetNote, cls: 'akl-target-highlight'});
-
-            // Line number and context
-            const contextLine = content.createDiv();
-            contextLine.style.fontSize = '0.9em';
-            contextLine.style.color = 'var(--text-muted)';
-            contextLine.createSpan({text: `Line ${suggestion.lineNumber + 1}`});
-
-            // Style the highlighted keyword
-            const highlights = keywordLine.querySelectorAll('.akl-keyword-highlight');
-            highlights.forEach(h => {
-                h.style.background = 'rgba(255, 170, 0, 0.25)';
-                h.style.padding = '2px 4px';
-                h.style.borderRadius = '3px';
-                h.style.fontWeight = '500';
-            });
-
-            const targets = keywordLine.querySelectorAll('.akl-target-highlight');
-            targets.forEach(t => {
-                t.style.color = 'var(--text-accent)';
-                t.style.fontWeight = '500';
-            });
-        });
-
-        // Action buttons
-        const actionContainer = contentEl.createDiv({cls: 'akl-action-buttons'});
-        actionContainer.style.display = 'flex';
-        actionContainer.style.gap = '0.5em';
-        actionContainer.style.justifyContent = 'flex-end';
-
-        const cancelBtn = actionContainer.createEl('button', {text: 'Cancel'});
-        cancelBtn.addEventListener('click', () => this.close());
-
-        const acceptBtn = actionContainer.createEl('button', {text: `Accept Selected (${this.selectedSuggestions.size})`, cls: 'mod-cta'});
-        acceptBtn.addEventListener('click', () => {
-            this.acceptSelected();
-        });
-
-        // Update button text when selections change
-        const updateButtonText = () => {
-            acceptBtn.textContent = `Accept Selected (${this.selectedSuggestions.size})`;
-        };
-
-        contentEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-            cb.addEventListener('change', updateButtonText);
-        });
-    }
-
-    acceptSelected() {
-        if (this.selectedSuggestions.size === 0) {
-            new Notice('No suggestions selected');
-            return;
-        }
-
-        // Sort by line number in reverse order (bottom to top)
-        // This way we don't mess up line numbers as we modify the document
-        const selectedIndices = Array.from(this.selectedSuggestions).sort((a, b) => {
-            return this.suggestions[b].lineNumber - this.suggestions[a].lineNumber;
-        });
-
-        let acceptedCount = 0;
-
-        selectedIndices.forEach(index => {
-            const suggestion = this.suggestions[index];
-            const line = this.editor.getLine(suggestion.lineNumber);
-
-            // Check if suggestion still exists on this line
-            if (!line.includes(suggestion.fullMatch)) return;
-
-            // Check if current line is inside a table
-            const content = this.editor.getValue();
-            const lineStart = this.editor.posToOffset({ line: suggestion.lineNumber, ch: 0 });
-            const plugin = this.app.plugins.plugins['auto-keyword-linker'];
-            const insideTable = plugin ? plugin.isInsideTable(content, lineStart) : false;
-
-            // Create the link
-            let link;
-            const targetWithBlock = suggestion.blockRef ? `${suggestion.targetNote}#${suggestion.blockRef}` : suggestion.targetNote;
-
-            if (suggestion.useRelative) {
-                // Use relative markdown link format
-                // Escape pipe characters in the display text if inside a table to prevent breaking table columns
-                const escapedMatchText = insideTable ? suggestion.matchText.replace(/\|/g, '\\|') : suggestion.matchText;
-                const encodedTarget = encodeURIComponent(suggestion.targetNote) + '.md';
-                const blockPart = suggestion.blockRef ? `#${suggestion.blockRef}` : '';
-                link = `[${escapedMatchText}](${encodedTarget}${blockPart})`;
-            } else {
-                // Use wikilink format
-                if (insideTable) {
-                    // Inside tables: Escape the pipe with single backslash \| to prevent breaking table formatting
-                    link = suggestion.targetNote === suggestion.matchText && !suggestion.blockRef
-                        ? `[[${suggestion.matchText}]]`
-                        : `[[${targetWithBlock}\\|${suggestion.matchText}]]`;
-                } else {
-                    // Outside table: standard wikilink format with | separator for alias
-                    link = suggestion.targetNote === suggestion.matchText && !suggestion.blockRef
-                        ? `[[${suggestion.matchText}]]`
-                        : `[[${targetWithBlock}|${suggestion.matchText}]]`;
-                }
-            }
-
-            // Replace the span with the link
-            const newLine = line.replace(suggestion.fullMatch, link);
-            this.editor.setLine(suggestion.lineNumber, newLine);
-            acceptedCount++;
-        });
-
-        new Notice(`Accepted ${acceptedCount} link suggestion${acceptedCount > 1 ? 's' : ''}`);
-        this.close();
-
-        // Update status bar
-        setTimeout(() => {
-            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-            if (view && view.editor) {
-                const plugin = this.app.plugins.plugins['auto-keyword-linker'];
-                if (plugin && plugin.updateStatusBar) {
-                    plugin.updateStatusBar();
-                }
-            }
-        }, 100);
-    }
-
-    onClose() {
-        const {contentEl} = this;
-        contentEl.empty();
-    }
-}
-
-/**
- * Modal for previewing changes to multiple notes (bulk operation)
- */
-class BulkPreviewModal extends Modal {
-    /**
-     * @param {App} app - Obsidian app instance
-     * @param {Array} results - Array of result objects from linkKeywordsInFile
-     * @param {Plugin} plugin - Reference to the plugin instance (for applying changes)
-     */
-    constructor(app, results, plugin) {
-        super(app);
-        this.results = results;
-        this.plugin = plugin;
-        // Track which specific links are selected for processing
-        // Format: Map<noteIndex, Set<changeIndex>>
-        this.selectedLinks = new Map();
-
-        // Initialize all links as selected by default
-        this.results.forEach((result, noteIndex) => {
-            const linkIndices = new Set(result.changes.map((_, i) => i));
-            this.selectedLinks.set(noteIndex, linkIndices);
-        });
-    }
-
-    /**
-     * Called when the modal is opened
-     * Builds the modal content
-     */
-    onOpen() {
-        const {contentEl} = this;
-        contentEl.createEl('h2', {text: 'Preview: Select Links to Create'});
-
-        // Calculate and show total statistics
-        const totalLinks = this.results.reduce((sum, r) => sum + r.linkCount, 0);
-        const initialSelectedCount = this.getSelectedLinksCount();
-        const statsText = `Found ${totalLinks} link(s) in ${this.results.length} note(s). ${initialSelectedCount} link(s) selected.`;
-        const statsEl = contentEl.createEl('p', {text: statsText, cls: 'bulk-preview-stats'});
-
-        // Select/Deselect all buttons
-        const selectButtonsDiv = contentEl.createDiv({cls: 'bulk-preview-select-buttons'});
-        selectButtonsDiv.style.marginBottom = '15px';
-        selectButtonsDiv.style.display = 'flex';
-        selectButtonsDiv.style.gap = '10px';
-
-        const selectAllBtn = selectButtonsDiv.createEl('button', {text: 'Select All Links'});
-        selectAllBtn.addEventListener('click', () => {
-            this.results.forEach((result, noteIndex) => {
-                const linkIndices = new Set(result.changes.map((_, i) => i));
-                this.selectedLinks.set(noteIndex, linkIndices);
-            });
-            contentEl.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
-            this.updateStats(statsEl);
-        });
-
-        const deselectAllBtn = selectButtonsDiv.createEl('button', {text: 'Deselect All Links'});
-        deselectAllBtn.addEventListener('click', () => {
-            this.selectedLinks.clear();
-            contentEl.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
-            this.updateStats(statsEl);
-        });
-
-        // Create scrollable container for results
-        const scrollDiv = contentEl.createDiv({cls: 'preview-scroll'});
-        scrollDiv.style.maxHeight = '400px';
-        scrollDiv.style.overflowY = 'auto';
-        scrollDiv.style.marginBottom = '20px';
-        scrollDiv.style.border = '1px solid var(--background-modifier-border)';
-        scrollDiv.style.borderRadius = '6px';
-        scrollDiv.style.padding = '10px';
-
-        // Display results for each file with individual link checkboxes
-        this.results.forEach((result, noteIndex) => {
-            const noteDiv = scrollDiv.createDiv({cls: 'preview-note'});
-            noteDiv.style.marginBottom = '15px';
-            noteDiv.style.padding = '10px';
-            noteDiv.style.background = 'var(--background-secondary)';
-            noteDiv.style.borderRadius = '6px';
-
-            // Note header with select all checkbox
-            const noteHeader = noteDiv.createDiv();
-            noteHeader.style.display = 'flex';
-            noteHeader.style.alignItems = 'center';
-            noteHeader.style.gap = '10px';
-            noteHeader.style.marginBottom = '10px';
-
-            // Master checkbox for this note (selects/deselects all links in note)
-            const noteCheckbox = noteHeader.createEl('input', {type: 'checkbox'});
-            noteCheckbox.checked = true;
-            noteCheckbox.setAttribute('data-note-index', noteIndex.toString());
-            noteCheckbox.addEventListener('change', (e) => {
-                const checked = e.target.checked;
-                const linkSet = this.selectedLinks.get(noteIndex) || new Set();
-
-                if (checked) {
-                    // Select all links in this note
-                    result.changes.forEach((_, linkIndex) => linkSet.add(linkIndex));
-                    this.selectedLinks.set(noteIndex, linkSet);
-                    // Check all link checkboxes
-                    contentEl.querySelectorAll(`input[data-note="${noteIndex}"]`).forEach(cb => cb.checked = true);
-                } else {
-                    // Deselect all links in this note
-                    this.selectedLinks.delete(noteIndex);
-                    // Uncheck all link checkboxes
-                    contentEl.querySelectorAll(`input[data-note="${noteIndex}"]`).forEach(cb => cb.checked = false);
-                }
-                this.updateStats(statsEl);
-            });
-
-            // Note title and count
-            const noteTitleDiv = noteHeader.createDiv();
-            noteTitleDiv.style.flex = '1';
-            noteTitleDiv.createEl('strong', {text: result.fileName});
-            noteTitleDiv.createEl('span', {
-                text: ` (${result.linkCount} link${result.linkCount !== 1 ? 's' : ''})`,
-                cls: 'bulk-preview-link-count'
-            });
-
-            // Links list with individual checkboxes
-            const linksList = noteDiv.createDiv();
-            linksList.style.marginLeft = '30px';
-
-            result.changes.forEach((change, linkIndex) => {
-                const linkItem = linksList.createDiv();
-                linkItem.style.display = 'flex';
-                linkItem.style.alignItems = 'flex-start';
-                linkItem.style.gap = '8px';
-                linkItem.style.marginBottom = '8px';
-                linkItem.style.padding = '4px';
-                linkItem.style.borderRadius = '4px';
-                linkItem.style.transition = 'background 0.2s';
-
-                linkItem.addEventListener('mouseenter', () => {
-                    linkItem.style.background = 'var(--background-modifier-hover)';
-                });
-                linkItem.addEventListener('mouseleave', () => {
-                    linkItem.style.background = 'transparent';
-                });
-
-                // Individual link checkbox
-                const linkCheckbox = linkItem.createEl('input', {type: 'checkbox'});
-                linkCheckbox.checked = true;
-                linkCheckbox.setAttribute('data-note', noteIndex.toString());
-                linkCheckbox.setAttribute('data-link', linkIndex.toString());
-                linkCheckbox.style.marginTop = '2px';
-                linkCheckbox.addEventListener('change', (e) => {
-                    const linkSet = this.selectedLinks.get(noteIndex) || new Set();
-
-                    if (e.target.checked) {
-                        linkSet.add(linkIndex);
-                    } else {
-                        linkSet.delete(linkIndex);
-                    }
-
-                    if (linkSet.size === 0) {
-                        this.selectedLinks.delete(noteIndex);
-                    } else {
-                        this.selectedLinks.set(noteIndex, linkSet);
-                    }
-
-                    // Update note-level checkbox state
-                    const allChecked = result.changes.every((_, i) => {
-                        const set = this.selectedLinks.get(noteIndex);
-                        return set && set.has(i);
-                    });
-                    noteCheckbox.checked = allChecked;
-
-                    this.updateStats(statsEl);
-                });
-
-                // Link content
-                const linkContent = linkItem.createDiv();
-                linkContent.style.flex = '1';
-                linkContent.style.fontSize = '0.9em';
-
-                const linkText = linkContent.createDiv();
-                linkText.createEl('strong', {text: change.keyword});
-                linkText.appendText(' → ');
-                linkText.createEl('code', {text: `[[${change.target}]]`});
-
-                // Show line number if available
-                if (change.lineNumber !== undefined) {
-                    const lineInfo = linkContent.createDiv();
-                    lineInfo.style.fontSize = '0.85em';
-                    lineInfo.style.color = 'var(--text-muted)';
-                    lineInfo.style.marginTop = '2px';
-                    lineInfo.textContent = `Line ${change.lineNumber + 1}`;
-                }
-            });
-        });
-
-        // Create button container
-        const buttonDiv = contentEl.createDiv({cls: 'modal-button-container'});
-        buttonDiv.style.display = 'flex';
-        buttonDiv.style.gap = '10px';
-        buttonDiv.style.justifyContent = 'flex-end';
-        buttonDiv.style.marginTop = '20px';
-
-        // Add "Cancel" button
-        const closeBtn = buttonDiv.createEl('button', {text: 'Cancel'});
-        closeBtn.addEventListener('click', () => this.close());
-
-        // Add "Apply Selected Links" button (primary action)
-        const selectedCount = this.getSelectedLinksCount();
-        const applyBtn = buttonDiv.createEl('button', {text: `Apply Selected Links (${selectedCount})`, cls: 'mod-cta'});
-        applyBtn.addEventListener('click', async () => {
-            await this.applySelected();
-        });
-
-        // Store button reference to update text
-        this.applyBtn = applyBtn;
-    }
-
-    /**
-     * Update the statistics text
-     */
-    updateStats(statsEl) {
-        const totalLinks = this.results.reduce((sum, r) => sum + r.linkCount, 0);
-        const selectedCount = this.getSelectedLinksCount();
-        statsEl.textContent = `Found ${totalLinks} link(s) in ${this.results.length} note(s). ${selectedCount} link(s) selected.`;
-
-        // Update button text
-        if (this.applyBtn) {
-            this.applyBtn.textContent = `Apply Selected Links (${selectedCount})`;
-        }
-    }
-
-    /**
-     * Get total count of selected links across all notes
-     */
-    getSelectedLinksCount() {
-        let total = 0;
-        for (const linkSet of this.selectedLinks.values()) {
-            total += linkSet.size;
-        }
-        return total;
-    }
-
-    /**
-     * Apply only the selected links to their respective notes
-     */
-    async applySelected() {
-        if (this.selectedLinks.size === 0) {
-            new Notice('No links selected');
-            return;
-        }
-
-        this.close();
-
-        const totalSelectedLinks = this.getSelectedLinksCount();
-        new Notice(`Creating ${totalSelectedLinks} link(s)...`);
-
-        let totalLinksCreated = 0;
-        let notesProcessed = 0;
-
-        // Process each note that has selected links
-        for (const [noteIndex, linkIndices] of this.selectedLinks) {
-            if (linkIndices.size === 0) continue;
-
-            const result = this.results[noteIndex];
-            if (!result || !result.file) continue;
-
-            const file = result.file;
-
-            // Get the selected keywords/targets for this note
-            const selectedChanges = result.changes.filter((_, i) => linkIndices.has(i));
-
-            // Create a temporary keyword filter set
-            const selectedKeywords = new Set(selectedChanges.map(c => c.keyword.toLowerCase()));
-
-            // Temporarily modify the plugin's keyword map to only include selected keywords
-            const originalBuildKeywordMap = this.plugin.buildKeywordMap.bind(this.plugin);
-
-            this.plugin.buildKeywordMap = () => {
-                const fullMap = originalBuildKeywordMap();
-                const filteredMap = {};
-
-                for (const [key, value] of Object.entries(fullMap)) {
-                    if (selectedKeywords.has(key.toLowerCase())) {
-                        filteredMap[key] = value;
-                    }
-                }
-
-                return filteredMap;
-            };
-
-            try {
-                // Process the file with only the selected keywords
-                const processResult = await this.plugin.linkKeywordsInFile(file, false);
-
-                if (processResult && processResult.changed) {
-                    totalLinksCreated += processResult.linkCount;
-                    notesProcessed++;
-                }
-            } finally {
-                // Restore the original buildKeywordMap function
-                this.plugin.buildKeywordMap = originalBuildKeywordMap;
-            }
-        }
-
-        // Update statistics
-        this.plugin.settings.statistics.totalLinksCreated += totalLinksCreated;
-        this.plugin.settings.statistics.totalNotesProcessed += notesProcessed;
-        this.plugin.settings.statistics.lastRunDate = new Date().toISOString();
-        await this.plugin.saveSettings();
-
-        // Show summary
-        new Notice(`✓ Processed ${notesProcessed} note(s), created ${totalLinksCreated} link(s)`);
-    }
-
-    /**
-     * Called when the modal is closed
-     * Clean up the modal content
-     */
-    onClose() {
-        const {contentEl} = this;
-        contentEl.empty();
-    }
-}
-
-/**
- * Settings tab for the plugin
- * Appears in Obsidian's settings under Plugin Options
- */
-class AutoKeywordLinkerSettingTab extends PluginSettingTab {
-    /**
-     * @param {App} app - Obsidian app instance
-     * @param {Plugin} plugin - Reference to the plugin instance
-     */
-    constructor(app, plugin) {
-        super(app, plugin);
-        this.plugin = plugin;
-        this.searchFilter = ''; // Track current search term
-        this.currentTab = 'keywords'; // Track which tab is active: 'keywords', 'groups', 'general', 'import-export'
-    }
-
-    /**
-     * Display the settings tab
-     * Called when the user opens the settings
-     */
-    display() {
-        const {containerEl} = this;
-        containerEl.empty();  // Clear any existing content
-
-        // Add custom CSS for improved UI
-        this.addCustomStyles();
-
-        // Main heading
-        const headerDiv = containerEl.createDiv({cls: 'akl-header'});
-        headerDiv.createEl('h2', {text: 'Auto Keyword Linker Settings'});
-
-        // Tab navigation
-        const tabNav = containerEl.createDiv({cls: 'akl-tab-nav'});
-
-        const tabs = [
-            { id: 'keywords', label: 'Keywords', icon: '🔤' },
-            { id: 'groups', label: 'Groups', icon: '📁' },
-            { id: 'general', label: 'General', icon: '⚙️' },
-            { id: 'import-export', label: 'Import/Export', icon: '📦' }
-        ];
-
-        tabs.forEach(tab => {
-            const tabBtn = tabNav.createEl('button', {
-                text: `${tab.icon} ${tab.label}`,
-                cls: `akl-tab-button ${this.currentTab === tab.id ? 'akl-tab-active' : ''}`
-            });
-            tabBtn.addEventListener('click', () => {
-                this.currentTab = tab.id;
-                this.display(); // Re-render with new tab
-            });
-        });
-
-        // Tab content container
-        const tabContent = containerEl.createDiv({cls: 'akl-tab-content'});
-
-        // Render the appropriate tab content
-        switch (this.currentTab) {
-            case 'keywords':
-                this.displayKeywordsTab(tabContent);
-                break;
-            case 'groups':
-                this.displayGroupsTab(tabContent);
-                break;
-            case 'general':
-                this.displayGeneralTab(tabContent);
-                break;
-            case 'import-export':
-                this.displayImportExportTab(tabContent);
-                break;
-        }
-    }
-
-    /**
-     * Display the Keywords tab
-     */
-    displayKeywordsTab(containerEl) {
-        // Stats
-        const statsDiv = containerEl.createDiv({cls: 'akl-stats-bar'});
-        statsDiv.createEl('span', {
-            text: `${this.plugin.settings.keywords.length} keyword${this.plugin.settings.keywords.length !== 1 ? 's' : ''} configured`
-        });
-
-        // Keywords section with improved header
-        const keywordsHeader = containerEl.createDiv({cls: 'akl-section-header'});
-        keywordsHeader.createEl('h3', {text: 'Keywords & Variations'});
-        keywordsHeader.createEl('p', {
-            text: 'Define keywords and their variations. All variations will link to the target note.',
-            cls: 'akl-section-desc'
-        });
-
-        // Search box for filtering keywords
-        const searchContainer = containerEl.createDiv({cls: 'akl-search-container'});
-        const searchInput = searchContainer.createEl('input', {
-            type: 'text',
-            placeholder: 'Search keywords...',
-            cls: 'akl-search-input',
-            value: this.searchFilter
-        });
-        searchInput.addEventListener('input', (e) => {
-            this.searchFilter = e.target.value;
-            this.renderKeywords(keywordsDiv);
-        });
-
-        // Container for keyword list
-        const keywordsDiv = containerEl.createDiv({cls: 'akl-keywords-container'});
-
-        // Render all current keywords
-        this.renderKeywords(keywordsDiv);
-
-        // Add button to create new keyword entries
-        const addBtnContainer = containerEl.createDiv({cls: 'akl-add-button-container'});
-        const addBtn = addBtnContainer.createEl('button', {
-            text: '+ Add Keyword',
-            cls: 'mod-cta akl-add-button'
-        });
-        addBtn.addEventListener('click', () => {
-            // Add empty keyword object to settings
-            // Use null for inheritable boolean settings so they inherit from group if assigned
-            this.plugin.settings.keywords.push({
-                id: this.plugin.generateId('kw'),
-                keyword: '',
-                target: '',
-                variations: [],
-                enableTags: null,
-                linkScope: 'vault-wide',
-                scopeFolder: '',
-                useRelativeLinks: null,
-                blockRef: '',
-                requireTag: '',
-                onlyInNotesLinkingTo: null,
-                suggestMode: null,
-                preventSelfLink: null,
-                collapsed: false,
-                groupId: null
-            });
-            // Re-render the display to show new entry
-            this.display();
-        });
-    }
-
-    /**
-     * Update card header title without full re-render
-     * @param {HTMLElement} cardTitle - The card title element to update
-     * @param {string} keyword - The keyword value
-     * @param {string} target - The target value
-     */
-    updateCardHeader(cardTitle, keyword, target) {
-        cardTitle.empty();
-        const titleText = keyword || 'New Keyword';
-        const targetText = target ? ` → ${target}` : '';
-        cardTitle.createSpan({text: titleText, cls: 'akl-keyword-name'});
-        if (targetText) {
-            cardTitle.createSpan({text: targetText, cls: 'akl-target-name'});
-        }
-    }
-
-    /**
-     * Display the Groups tab
-     */
-    displayGroupsTab(containerEl) {
-        // Stats
-        const statsDiv = containerEl.createDiv({cls: 'akl-stats-bar'});
-        const totalKeywordsInGroups = this.plugin.settings.keywordGroups.reduce((sum, group) => {
-            return sum + this.plugin.settings.keywords.filter(kw => kw.groupId === group.id).length;
-        }, 0);
-        statsDiv.createEl('span', {
-            text: `${this.plugin.settings.keywordGroups.length} group${this.plugin.settings.keywordGroups.length !== 1 ? 's' : ''} • ${totalKeywordsInGroups} keyword${totalKeywordsInGroups !== 1 ? 's' : ''} in groups`
-        });
-
-        // Groups section header
-        const groupsHeader = containerEl.createDiv({cls: 'akl-section-header'});
-        groupsHeader.createEl('h3', {text: 'Keyword Groups'});
-        groupsHeader.createEl('p', {
-            text: 'Organize keywords into groups with shared settings. Keywords inherit settings from their group.',
-            cls: 'akl-section-desc'
-        });
-
-        // Container for groups list
-        const groupsDiv = containerEl.createDiv({cls: 'akl-groups-container'});
-
-        // Render all groups
-        this.renderGroups(groupsDiv);
-
-        // Add button to create new group
-        const addBtnContainer = containerEl.createDiv({cls: 'akl-add-button-container'});
-        const addBtn = addBtnContainer.createEl('button', {
-            text: '+ Create Group',
-            cls: 'mod-cta akl-add-button'
-        });
-        addBtn.addEventListener('click', () => {
-            // Add empty group object to settings
-            this.plugin.settings.keywordGroups.push({
-                id: this.plugin.generateId('grp'),
-                name: 'New Group',
-                collapsed: false,
-                settings: {
-                    enableTags: false,
-                    linkScope: 'vault-wide',
-                    scopeFolder: '',
-                    useRelativeLinks: false,
-                    blockRef: '',
-                    requireTag: '',
-                    onlyInNotesLinkingTo: false,
-                    suggestMode: false,
-                    preventSelfLink: false
-                }
-            });
-            // Re-render the display to show new entry
-            this.display();
-        });
-    }
-
-    /**
-     * Display the General tab
-     */
-    displayGeneralTab(containerEl) {
-        // General settings section
-        const generalHeader = containerEl.createDiv({cls: 'akl-section-header'});
-        generalHeader.createEl('h3', {text: 'Linking Behavior'});
-        generalHeader.createEl('p', {
-            text: 'Configure how keywords are linked in your notes.',
-            cls: 'akl-section-desc'
-        });
-
-        // First occurrence only toggle
-        new Setting(containerEl)
-            .setName('First occurrence only')
-            .setDesc('Link only the first mention of each keyword per note')
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.firstOccurrenceOnly)
-                .onChange(async (value) => {
-                    this.plugin.settings.firstOccurrenceOnly = value;
-                    await this.plugin.saveSettings();
-                }));
-
-        // Case sensitive toggle
-        new Setting(containerEl)
-            .setName('Case sensitive')
-            .setDesc('Match keywords with exact case')
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.caseSensitive)
-                .onChange(async (value) => {
-                    this.plugin.settings.caseSensitive = value;
-                    await this.plugin.saveSettings();
-                }));
-
-        // Prevent self-link toggle (global)
-        new Setting(containerEl)
-            .setName('Prevent self-links (global)')
-            .setDesc('Prevent keywords from linking on their own target note (applies to all keywords unless overridden per-keyword)')
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.preventSelfLinkGlobal)
-                .onChange(async (value) => {
-                    this.plugin.settings.preventSelfLinkGlobal = value;
-                    await this.plugin.saveSettings();
-                }));
-
-        // Auto-link on save toggle
-        new Setting(containerEl)
-            .setName('Auto-link on save')
-            .setDesc('Automatically link keywords when you save a note (requires reload)')
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.autoLinkOnSave)
-                .onChange(async (value) => {
-                    this.plugin.settings.autoLinkOnSave = value;
-                    await this.plugin.saveSettings();
-                    new Notice('Please reload the plugin for this change to take effect');
-                }));
-
-        // Note Creation section
-        const noteCreationHeader = containerEl.createDiv({cls: 'akl-section-header'});
-        noteCreationHeader.createEl('h3', {text: 'Note Creation'});
-        noteCreationHeader.createEl('p', {
-            text: 'Configure how new notes are created when target notes don\'t exist.',
-            cls: 'akl-section-desc'
-        });
-
-        // Auto-create notes toggle
-        new Setting(containerEl)
-            .setName('Auto-create notes')
-            .setDesc('Automatically create target notes if they don\'t exist')
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.autoCreateNotes)
-                .onChange(async (value) => {
-                    this.plugin.settings.autoCreateNotes = value;
-                    await this.plugin.saveSettings();
-                }));
-
-        // New note folder setting
-        const folders = this.getAllFolders();
-        const allFolders = ['', ...folders];
-
-        new Setting(containerEl)
-            .setName('New note folder')
-            .setDesc('Click to search and select folder where new notes will be created')
-            .addText(text => {
-                // Display current folder or root
-                const displayValue = this.plugin.settings.newNoteFolder || '/ (Root)';
-                text.setValue(displayValue)
-                    .setPlaceholder('Click to select folder...');
-
-                // Make it read-only (user can't type directly)
-                text.inputEl.readOnly = true;
-                text.inputEl.style.cursor = 'pointer';
-
-                // Open fuzzy search modal on click
-                text.inputEl.addEventListener('click', () => {
-                    const modal = new FolderSuggestModal(
-                        this.app,
-                        allFolders,
-                        this.plugin.settings.newNoteFolder || '',
-                        async (selectedFolder) => {
-                            // Update setting
-                            this.plugin.settings.newNoteFolder = selectedFolder;
-                            await this.plugin.saveSettings();
-
-                            // Update display
-                            const newDisplayValue = selectedFolder || '/ (Root)';
-                            text.setValue(newDisplayValue);
-                        }
-                    );
-                    modal.open();
-                });
-            });
-
-        // New note template setting
-        new Setting(containerEl)
-            .setName('New note template')
-            .setDesc('Template for auto-created notes. Use {{keyword}} and {{date}} as placeholders.')
-            .addTextArea(text => text
-                .setPlaceholder('# {{keyword}}\n\nCreated: {{date}}')
-                .setValue(this.plugin.settings.newNoteTemplate)
-                .onChange(async (value) => {
-                    this.plugin.settings.newNoteTemplate = value;
-                    await this.plugin.saveSettings();
-                }));
-
-        // Keyword Suggestion Settings section
-        const suggestionHeader = containerEl.createDiv({cls: 'akl-section-header'});
-        suggestionHeader.createEl('h3', {text: 'Keyword Suggestion Settings'});
-        suggestionHeader.createEl('p', {
-            text: 'Configure how the keyword suggestion feature works.',
-            cls: 'akl-section-desc'
-        });
-
-        // Custom stop words setting
-        new Setting(containerEl)
-            .setName('Custom stop words')
-            .setDesc('Additional words to exclude from keyword suggestions (comma-separated). These are added to the default stop word list.')
-            .addTextArea(text => {
-                text.setPlaceholder('example, test, demo, sample')
-                    .setValue((this.plugin.settings.customStopWords || []).join(', '))
-                    .onChange(async (value) => {
-                        // Parse comma-separated values and trim whitespace
-                        const words = value.split(',')
-                            .map(w => w.trim())
-                            .filter(w => w.length > 0);
-                        this.plugin.settings.customStopWords = words;
-                        await this.plugin.saveSettings();
-                    });
-                text.inputEl.rows = 4;
-                text.inputEl.cols = 50;
-            });
-
-        // Button to reset custom stop words
-        new Setting(containerEl)
-            .setName('Reset custom stop words')
-            .setDesc('Clear all custom stop words')
-            .addButton(button => button
-                .setButtonText('Reset')
-                .onClick(async () => {
-                    this.plugin.settings.customStopWords = [];
-                    await this.plugin.saveSettings();
-                    new Notice('Custom stop words cleared');
-                    this.display(); // Refresh the display
-                }));
-    }
-
-    /**
-     * Display the Import/Export tab
-     */
-    displayImportExportTab(containerEl) {
-        // Import/Export section header
-        const header = containerEl.createDiv({cls: 'akl-section-header'});
-        header.createEl('h3', {text: 'Import & Export Keywords'});
-        header.createEl('p', {
-            text: 'Export your keywords to CSV or import keywords from a CSV file.',
-            cls: 'akl-section-desc'
-        });
-
-        // Export section
-        new Setting(containerEl)
-            .setName('Export keywords to CSV')
-            .setDesc('Export all keywords and their settings to a CSV file')
-            .addButton(button => button
-                .setButtonText('Export to CSV')
-                .setCta()
-                .onClick(() => this.plugin.exportKeywordsToCSV()));
-
-        // Import section
-        new Setting(containerEl)
-            .setName('Import keywords from CSV')
-            .setDesc('Import keywords from a CSV file (opens file picker)')
-            .addButton(button => button
-                .setButtonText('Import from CSV')
-                .onClick(() => this.plugin.importKeywordsFromCSV()));
-
-        // Statistics section
-        const statsHeader = containerEl.createDiv({cls: 'akl-section-header'});
-        statsHeader.createEl('h3', {text: 'Statistics'});
-        statsHeader.createEl('p', {
-            text: 'View usage statistics for the plugin.',
-            cls: 'akl-section-desc'
-        });
-
-        // View statistics button
-        new Setting(containerEl)
-            .setName('View statistics')
-            .setDesc('See how many links have been created and which notes have been processed')
-            .addButton(button => button
-                .setButtonText('View Statistics')
-                .onClick(() => this.plugin.showStatistics()));
-    }
-
-    /**
-     * Render the list of keywords with their settings
-     * @param {HTMLElement} container - Container element to render into
-     */
-    renderKeywords(container) {
-        container.empty();  // Clear existing content
-
-        // Filter keywords based on search term
-        const searchTerm = this.searchFilter.toLowerCase();
-        let visibleCount = 0;
-
-        // Iterate through all keyword entries
-        for (let i = 0; i < this.plugin.settings.keywords.length; i++) {
-            const item = this.plugin.settings.keywords[i];
-
-            // Filter logic: search in keyword, target, and variations
-            if (searchTerm) {
-                const matchesKeyword = item.keyword && item.keyword.toLowerCase().includes(searchTerm);
-                const matchesTarget = item.target && item.target.toLowerCase().includes(searchTerm);
-                const matchesVariations = item.variations && item.variations.some(v =>
-                    v.toLowerCase().includes(searchTerm)
-                );
-
-                // Skip this keyword if it doesn't match the search
-                if (!matchesKeyword && !matchesTarget && !matchesVariations) {
-                    continue;
-                }
-            }
-
-            visibleCount++;
-
-            // Initialize collapsed state if not set
-            if (item.collapsed === undefined) {
-                item.collapsed = false;
-            }
-
-            // Create card container for this keyword entry
-            const cardDiv = container.createDiv({cls: 'akl-keyword-card'});
-
-            // Card header with collapse toggle
-            const cardHeader = cardDiv.createDiv({cls: 'akl-card-header'});
-
-            // Collapse toggle button
-            const collapseBtn = cardHeader.createDiv({cls: 'akl-collapse-btn'});
-            collapseBtn.innerHTML = item.collapsed ? '▶' : '▼';
-            collapseBtn.setAttribute('aria-label', item.collapsed ? 'Expand' : 'Collapse');
-            collapseBtn.addEventListener('click', async () => {
-                item.collapsed = !item.collapsed;
-                await this.plugin.saveSettings();
-                this.display();
-            });
-
-            // Card title area
-            const cardTitle = cardHeader.createDiv({cls: 'akl-card-title'});
-            const titleText = item.keyword || 'New Keyword';
-            const targetText = item.target ? ` → ${item.target}` : '';
-            cardTitle.createSpan({text: titleText, cls: 'akl-keyword-name'});
-            if (targetText) {
-                cardTitle.createSpan({text: targetText, cls: 'akl-target-name'});
-            }
-
-            // Card badges
-            const cardBadges = cardHeader.createDiv({cls: 'akl-card-badges'});
-
-            // Show group badge if keyword is in a group
-            if (item.groupId) {
-                const group = this.plugin.settings.keywordGroups.find(g => g.id === item.groupId);
-                if (group) {
-                    cardBadges.createSpan({text: `📁 ${group.name}`, cls: 'akl-badge akl-badge-group'});
-                }
-            }
-
-            // Get effective settings for badge display
-            const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
-
-            if (effectiveSettings.enableTags) {
-                cardBadges.createSpan({text: 'Tags', cls: 'akl-badge akl-badge-tags'});
-            }
-            if (effectiveSettings.useRelativeLinks) {
-                cardBadges.createSpan({text: 'MD Links', cls: 'akl-badge akl-badge-md-links'});
-            }
-            if (effectiveSettings.suggestMode) {
-                cardBadges.createSpan({text: 'Suggest', cls: 'akl-badge akl-badge-suggest'});
-            }
-
-            // Get auto-discovered aliases for counting (will be reused later)
-            const autoAliasesForItem = this.plugin.getAliasesForNote(item.target);
-
-            // Count both manual variations and auto-discovered aliases
-            const manualCount = (item.variations && item.variations.length) || 0;
-            const autoCount = (autoAliasesForItem && autoAliasesForItem.length) || 0;
-            const totalVariations = manualCount + autoCount;
-
-            if (totalVariations > 0) {
-                cardBadges.createSpan({
-                    text: `${totalVariations} var`,
-                    cls: 'akl-badge akl-badge-variations'
-                });
-            }
-
-            // Card body (collapsible)
-            const cardBody = cardDiv.createDiv({cls: 'akl-card-body'});
-            if (item.collapsed) {
-                cardBody.style.display = 'none';
-            }
-
-            // Check if keyword is in a group (used throughout the settings below)
-            const isInGroup = !!item.groupId;
-            const groupName = isInGroup ? this.plugin.settings.keywordGroups.find(g => g.id === item.groupId)?.name : null;
-
-            // Keyword input field
-            new Setting(cardBody)
-                .setName('Keyword')
-                .setDesc('The text to search for in your notes')
-                .addText(text => {
-                    text.setValue(item.keyword)
-                        .setPlaceholder('Enter keyword...')
-                        .onChange(async (value) => {
-                            this.plugin.settings.keywords[i].keyword = value;
-                            await this.plugin.saveSettings();
-                            // Update card header title without full re-render
-                            this.updateCardHeader(cardTitle, value, this.plugin.settings.keywords[i].target);
-                        });
-                    text.inputEl.addClass('akl-input');
-
-                    // Auto-fill target only when user leaves the field (on blur)
-                    text.inputEl.addEventListener('blur', async () => {
-                        // If target is empty, auto-fill it with the keyword
-                        if (!this.plugin.settings.keywords[i].target && this.plugin.settings.keywords[i].keyword) {
-                            this.plugin.settings.keywords[i].target = this.plugin.settings.keywords[i].keyword;
-                            await this.plugin.saveSettings();
-                            // Update card header and re-render to show the auto-filled target
-                            this.display();
-                        }
-                    });
-                });
-
-            // Target note input field with fuzzy search modal
-            new Setting(cardBody)
-                .setName('Target note')
-                .setDesc('Click to search and select the note to create links to')
-                .addText(text => {
-                    // Get all markdown files for the fuzzy search
-                    const files = this.app.vault.getMarkdownFiles();
-                    const noteNames = new Set(); // Use Set to avoid duplicates
-
-                    for (let file of files) {
-                        // Add basename (note name without extension)
-                        noteNames.add(file.basename);
-
-                        // If note is in a subfolder, also add the full path without extension
-                        if (file.path.includes('/')) {
-                            const pathWithoutExt = file.path.endsWith('.md') ? file.path.slice(0, -3) : file.path;
-                            noteNames.add(pathWithoutExt);
-                        }
-                    }
-
-                    // Sort alphabetically
-                    const allNotes = Array.from(noteNames).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
-
-                    // Display current target
-                    const displayValue = item.target || 'Click to select...';
-                    text.setValue(displayValue)
-                        .setPlaceholder('Click to select note...');
-
-                    // Make it read-only (user can't type directly)
-                    text.inputEl.readOnly = true;
-                    text.inputEl.style.cursor = 'pointer';
-
-                    // Open fuzzy search modal on click
-                    text.inputEl.addEventListener('click', () => {
-                        const modal = new NoteSuggestModal(
-                            this.app,
-                            allNotes,
-                            item.target || '',
-                            async (selectedNote) => {
-                                // Update setting
-                                this.plugin.settings.keywords[i].target = selectedNote;
-                                await this.plugin.saveSettings();
-
-                                // Update display
-                                text.setValue(selectedNote);
-
-                                // Update card header title without full re-render
-                                this.updateCardHeader(cardTitle, this.plugin.settings.keywords[i].keyword, selectedNote);
-                            }
-                        );
-                        modal.open();
-                    });
-                });
-
-            // Block reference input field
-            new Setting(cardBody)
-                .setName('Block reference')
-                .setDesc('Optional: Link to a specific block (e.g., ^block-id for abbreviation definitions)')
-                .addText(text => {
-                    text.setValue(item.blockRef || '')
-                        .setPlaceholder('^block-id')
-                        .onChange(async (value) => {
-                            // Sanitize: remove any wikilinks that might have been autocompleted
-                            // Extract just the block reference ID from strings like "^[[Note|text]]-def"
-                            let sanitized = value;
-
-                            // Remove wikilinks: [[Note|text]] or [[Note]]
-                            sanitized = sanitized.replace(/\[\[.*?\]\]/g, '');
-
-                            // Ensure it starts with ^ if user provided content
-                            if (sanitized && !sanitized.startsWith('^')) {
-                                sanitized = '^' + sanitized;
-                            }
-
-                            // Remove any spaces
-                            sanitized = sanitized.replace(/\s/g, '');
-
-                            this.plugin.settings.keywords[i].blockRef = sanitized;
-                            await this.plugin.saveSettings();
-
-                            // Update the input field to show sanitized value
-                            if (sanitized !== value) {
-                                text.setValue(sanitized);
-                            }
-                        });
-
-                    // Disable Obsidian's autocomplete on this field
-                    text.inputEl.setAttribute('autocomplete', 'off');
-                    text.inputEl.setAttribute('data-no-suggest', 'true');
-                });
-
-            // Require tag input field
-            new Setting(cardBody)
-                .setName('Require tag')
-                .setDesc('Optional: Only link to target note if it has this tag (e.g., #reviewed or reviewed)')
-                .addText(text => {
-                    text.setValue(item.requireTag || '')
-                        .setPlaceholder('#tag or tag')
-                        .onChange(async (value) => {
-                            // Normalize: ensure consistent format (remove # if present, we'll add it back for checking)
-                            let normalized = value.trim();
-
-                            // Remove leading # if present for storage (we'll handle both formats when checking)
-                            if (normalized.startsWith('#')) {
-                                normalized = normalized.substring(1);
-                            }
-
-                            this.plugin.settings.keywords[i].requireTag = normalized;
-                            await this.plugin.saveSettings();
-                        });
-
-                    text.inputEl.setAttribute('autocomplete', 'off');
-                });
-
-            // Only link in notes already linking to target toggle
-            new Setting(cardBody)
-                .setName('Only link in notes already linking to target')
-                .setDesc('Only create keyword links in notes that already have at least one link to the target note')
-                .addToggle(toggle => {
-                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
-                    toggle.setValue(effectiveSettings.onlyInNotesLinkingTo || false)
-                        .onChange(async (value) => {
-                            this.plugin.settings.keywords[i].onlyInNotesLinkingTo = value;
-                            await this.plugin.saveSettings();
-                        });
-                });
-
-            // Variations with chip-style interface
-            const variationsContainer = cardBody.createDiv({cls: 'akl-variations-section'});
-            variationsContainer.createEl('div', {
-                text: 'Variations',
-                cls: 'setting-item-name'
-            });
-            variationsContainer.createEl('div', {
-                text: 'Alternative spellings that also link to the target note',
-                cls: 'setting-item-description'
-            });
-
-            // Reuse the auto-discovered aliases from earlier (already fetched for badge count)
-            // const autoAliases = this.plugin.getAliasesForNote(item.target); // REMOVED - reusing autoAliasesForItem
-
-            // Chips display area
-            const chipsContainer = variationsContainer.createDiv({cls: 'akl-chips-container'});
-
-            // Check if we have any variations or aliases to show
-            const hasManualVariations = item.variations && item.variations.length > 0;
-            const hasAutoAliases = autoAliasesForItem && autoAliasesForItem.length > 0;
-
-            if (!hasManualVariations && !hasAutoAliases) {
-                chipsContainer.createSpan({
-                    text: 'No variations added yet',
-                    cls: 'akl-no-variations'
-                });
-            } else {
-                // Render manual variations
-                this.renderVariationChips(chipsContainer, item.variations || [], i);
-
-                // Render auto-discovered aliases (with different style)
-                if (hasAutoAliases) {
-                    this.renderAliasChips(chipsContainer, autoAliasesForItem);
-                }
-            }
-
-            // Input for adding new variations
-            const addVariationContainer = variationsContainer.createDiv({cls: 'akl-add-variation'});
-            const variationInput = addVariationContainer.createEl('input', {
-                type: 'text',
-                placeholder: 'Type and press Enter to add...',
-                cls: 'akl-variation-input'
-            });
-
-            variationInput.addEventListener('keydown', async (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    const newVariation = variationInput.value.trim();
-
-                    if (!newVariation) {
-                        return; // Empty input, do nothing
-                    }
-
-                    if (!item.variations) {
-                        item.variations = [];
-                    }
-
-                    // Check for duplicates (case-insensitive)
-                    const isDuplicate = item.variations.some(v => v.toLowerCase() === newVariation.toLowerCase());
-
-                    if (isDuplicate) {
-                        new Notice('Variation already exists');
-                        variationInput.value = '';
-                        return;
-                    }
-
-                    // Clear input immediately (before async operations)
-                    variationInput.value = '';
-
-                    // Add variation and save
-                    item.variations.push(newVariation);
-                    await this.plugin.saveSettings();
-
-                    // Clear chips container before re-rendering
-                    chipsContainer.empty();
-
-                    // Re-render all chips (manual variations + auto aliases)
-                    const hasManualVariations = item.variations && item.variations.length > 0;
-                    const hasAutoAliases = autoAliasesForItem && autoAliasesForItem.length > 0;
-
-                    if (!hasManualVariations && !hasAutoAliases) {
-                        chipsContainer.createSpan({
-                            text: 'No variations added yet',
-                            cls: 'akl-no-variations'
-                        });
-                    } else {
-                        // Render manual variations
-                        this.renderVariationChips(chipsContainer, item.variations || [], i);
-
-                        // Render auto-discovered aliases (with different style)
-                        if (hasAutoAliases) {
-                            this.renderAliasChips(chipsContainer, autoAliasesForItem);
-                        }
-                    }
-
-                    // Restore focus to input
-                    variationInput.focus();
-                }
-            });
-
-            // Enable tags toggle
-            const enableTagsSetting = new Setting(cardBody)
-                .setName('Enable tags')
-                .setDesc(isInGroup ? `Inherited from group "${groupName}"` : 'Automatically add tags to source and target notes')
-                .addToggle(toggle => {
-                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
-                    toggle.setValue(effectiveSettings.enableTags || false)
-                        .setDisabled(isInGroup)
-                        .onChange(async (value) => {
-                            if (!isInGroup) {
-                                this.plugin.settings.keywords[i].enableTags = value;
-                                await this.plugin.saveSettings();
-                                this.display();
-                            }
-                        });
-                });
-            if (isInGroup) {
-                enableTagsSetting.settingEl.addClass('akl-disabled-setting');
-            }
-
-            // Use relative markdown links toggle
-            const useRelativeLinksSetting = new Setting(cardBody)
-                .setName('Use relative markdown links')
-                .setDesc(isInGroup ? `Inherited from group "${groupName}"` : 'Create markdown links [text](note.md) instead of wikilinks [[note]]')
-                .addToggle(toggle => {
-                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
-                    toggle.setValue(effectiveSettings.useRelativeLinks || false)
-                        .setDisabled(isInGroup)
-                        .onChange(async (value) => {
-                            if (!isInGroup) {
-                                this.plugin.settings.keywords[i].useRelativeLinks = value;
-                                await this.plugin.saveSettings();
-                            }
-                        });
-                });
-            if (isInGroup) {
-                useRelativeLinksSetting.settingEl.addClass('akl-disabled-setting');
-            }
-
-            // Suggest mode toggle
-            const suggestModeSetting = new Setting(cardBody)
-                .setName('Suggest instead of auto-link')
-                .setDesc(isInGroup ? `Inherited from group "${groupName}"` : 'Highlight keywords as suggestions instead of automatically creating links. Right-click to accept.')
-                .addToggle(toggle => {
-                    // Show effective value (from group if null)
-                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
-                    toggle.setValue(effectiveSettings.suggestMode || false)
-                        .setDisabled(isInGroup)
-                        .onChange(async (value) => {
-                            if (!isInGroup) {
-                                this.plugin.settings.keywords[i].suggestMode = value;
-                                await this.plugin.saveSettings();
-                                this.display(); // Re-render to update badge
-                            }
-                        });
-                });
-            if (isInGroup) {
-                suggestModeSetting.settingEl.addClass('akl-disabled-setting');
-            }
-
-            // Group assignment dropdown
-            new Setting(cardBody)
-                .setName('Keyword Group')
-                .setDesc('Assign to a group to inherit group settings. Group settings will be locked and cannot be overridden per-keyword.')
-                .addDropdown(dropdown => {
-                    // Add "None" option
-                    dropdown.addOption('', '(No group)');
-
-                    // Add all groups as options
-                    this.plugin.settings.keywordGroups.forEach(group => {
-                        dropdown.addOption(group.id, group.name);
-                    });
-
-                    dropdown.setValue(item.groupId || '')
-                        .onChange(async (value) => {
-                            this.plugin.settings.keywords[i].groupId = value || null;
-                            await this.plugin.saveSettings();
-                            this.display(); // Re-render to update UI and disable/enable settings
-                        });
-                });
-
-            // Prevent self-link toggle (per-keyword)
-            const preventSelfLinkSetting = new Setting(cardBody)
-                .setName('Prevent self-link')
-                .setDesc(isInGroup ? `Inherited from group "${groupName}"` : 'Prevent this keyword from linking on its own target note (overrides global setting)')
-                .addToggle(toggle => {
-                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
-                    toggle.setValue(effectiveSettings.preventSelfLink || false)
-                        .setDisabled(isInGroup)
-                        .onChange(async (value) => {
-                            if (!isInGroup) {
-                                this.plugin.settings.keywords[i].preventSelfLink = value;
-                                await this.plugin.saveSettings();
-                            }
-                        });
-                });
-            if (isInGroup) {
-                preventSelfLinkSetting.settingEl.addClass('akl-disabled-setting');
-            }
-
-            // Link Scope dropdown
-            const linkScopeSetting = new Setting(cardBody)
-                .setName('Link scope')
-                .setDesc(isInGroup ? `Inherited from group "${groupName}"` : 'Control where this keyword will be linked')
-                .addDropdown(dropdown => {
-                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
-                    dropdown.addOption('vault-wide', 'Vault-wide (everywhere)')
-                        .addOption('same-folder', 'Same folder only')
-                        .addOption('source-folder', 'Source in specific folder')
-                        .addOption('target-folder', 'Target in specific folder')
-                        .setValue(effectiveSettings.linkScope || 'vault-wide')
-                        .setDisabled(isInGroup)
-                        .onChange(async (value) => {
-                            if (!isInGroup) {
-                                this.plugin.settings.keywords[i].linkScope = value;
-                                await this.plugin.saveSettings();
-                                this.display(); // Re-render to show/hide folder input
-                            }
-                        });
-                });
-            if (isInGroup) {
-                linkScopeSetting.settingEl.addClass('akl-disabled-setting');
-            }
-
-            // Folder selector (only shown for source-folder or target-folder scopes)
-            if (item.linkScope === 'source-folder' || item.linkScope === 'target-folder') {
-                // Get all unique folders in the vault
-                const folders = this.getAllFolders();
-
-                // Add empty string for root option
-                const allFolders = ['', ...folders];
-
-                new Setting(cardBody)
-                    .setName('Folder')
-                    .setDesc('Click to search and select a folder')
-                    .addText(text => {
-                        // Display current folder or root
-                        const displayValue = item.scopeFolder || '/ (Root)';
-                        text.setValue(displayValue)
-                            .setPlaceholder('Click to select folder...');
-
-                        // Make it read-only (user can't type directly)
-                        text.inputEl.readOnly = true;
-                        text.inputEl.style.cursor = 'pointer';
-
-                        // Open fuzzy search modal on click
-                        text.inputEl.addEventListener('click', () => {
-                            const modal = new FolderSuggestModal(
-                                this.app,
-                                allFolders,
-                                item.scopeFolder || '',
-                                async (selectedFolder) => {
-                                    // Update setting
-                                    this.plugin.settings.keywords[i].scopeFolder = selectedFolder;
-                                    await this.plugin.saveSettings();
-
-                                    // Update display
-                                    const newDisplayValue = selectedFolder || '/ (Root)';
-                                    text.setValue(newDisplayValue);
-                                }
-                            );
-                            modal.open();
-                        });
-                    });
-            }
-
-            // Card footer with actions
-            const cardFooter = cardBody.createDiv({cls: 'akl-card-footer'});
-
-            // Delete button
-            const deleteBtn = cardFooter.createEl('button', {
-                text: 'Delete Keyword',
-                cls: 'akl-delete-btn'
-            });
-            deleteBtn.addEventListener('click', async () => {
-                // Remove this keyword from the array
-                this.plugin.settings.keywords.splice(i, 1);
-                await this.plugin.saveSettings();
-                // Re-render to show updated list
-                this.display();
-            });
-        }
-
-        // Show message if no keywords match the search
-        if (visibleCount === 0 && searchTerm) {
-            const noResults = container.createDiv({cls: 'akl-no-results'});
-            noResults.createEl('p', {text: 'No keywords found'});
-            noResults.createEl('p', {
-                text: `No keywords match "${this.searchFilter}"`,
-                cls: 'akl-no-results-hint'
-            });
-        }
-    }
-
-    /**
-     * Render the list of groups with their settings
-     * @param {HTMLElement} container - Container element to render into
-     */
-    renderGroups(container) {
-        container.empty();  // Clear existing content
-
-        // If no groups exist yet, show empty state
-        if (this.plugin.settings.keywordGroups.length === 0) {
-            const emptyState = container.createDiv({cls: 'akl-empty-state'});
-            emptyState.createEl('p', {text: 'No groups yet'});
-            emptyState.createEl('p', {
-                text: 'Create a group to organize your keywords with shared settings',
-                cls: 'akl-empty-hint'
-            });
-            return;
-        }
-
-        // Iterate through all group entries
-        for (let i = 0; i < this.plugin.settings.keywordGroups.length; i++) {
-            const group = this.plugin.settings.keywordGroups[i];
-
-            // Initialize collapsed state if not set
-            if (group.collapsed === undefined) {
-                group.collapsed = false;
-            }
-
-            // Get keywords in this group
-            const keywordsInGroup = this.plugin.settings.keywords.filter(kw => kw.groupId === group.id);
-
-            // Create card container for this group entry
-            const cardDiv = container.createDiv({cls: 'akl-keyword-card akl-group-card'});
-
-            // Card header with collapse toggle
-            const cardHeader = cardDiv.createDiv({cls: 'akl-card-header'});
-
-            // Collapse toggle button
-            const collapseBtn = cardHeader.createDiv({cls: 'akl-collapse-btn'});
-            collapseBtn.innerHTML = group.collapsed ? '▶' : '▼';
-            collapseBtn.setAttribute('aria-label', group.collapsed ? 'Expand' : 'Collapse');
-            collapseBtn.addEventListener('click', async () => {
-                group.collapsed = !group.collapsed;
-                await this.plugin.saveSettings();
-                this.display();
-            });
-
-            // Card title area
-            const cardTitle = cardHeader.createDiv({cls: 'akl-card-title'});
-            cardTitle.createSpan({text: group.name, cls: 'akl-keyword-name'});
-            cardTitle.createSpan({text: ` (${keywordsInGroup.length} keywords)`, cls: 'akl-target-name'});
-
-            // Delete button
-            const deleteBtn = cardHeader.createEl('button', {
-                text: '🗑️ Delete',
-                cls: 'akl-delete-btn'
-            });
-            deleteBtn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                // Remove group ID from all keywords in this group
-                this.plugin.settings.keywords.forEach(kw => {
-                    if (kw.groupId === group.id) {
-                        kw.groupId = null;
-                    }
-                });
-                // Remove the group
-                this.plugin.settings.keywordGroups.splice(i, 1);
-                await this.plugin.saveSettings();
-                this.display();
-            });
-
-            // Card body (collapsible)
-            const cardBody = cardDiv.createDiv({cls: 'akl-card-body'});
-            if (group.collapsed) {
-                cardBody.style.display = 'none';
-            }
-
-            // Group name input field
-            new Setting(cardBody)
-                .setName('Group name')
-                .setDesc('Name for this group of keywords')
-                .addText(text => {
-                    text.setValue(group.name)
-                        .setPlaceholder('Enter group name...')
-                        .onChange(async (value) => {
-                            this.plugin.settings.keywordGroups[i].name = value;
-                            await this.plugin.saveSettings();
-                            // Update card header title
-                            cardTitle.empty();
-                            cardTitle.createSpan({text: value, cls: 'akl-keyword-name'});
-                            cardTitle.createSpan({text: ` (${keywordsInGroup.length} keywords)`, cls: 'akl-target-name'});
-                        });
-                    text.inputEl.addClass('akl-input');
-                });
-
-            // Keywords in group section
-            const keywordsSection = cardBody.createDiv({cls: 'akl-group-keywords-section'});
-            keywordsSection.createEl('h4', {text: 'Keywords in this group', cls: 'akl-subsection-header'});
-
-            if (keywordsInGroup.length === 0) {
-                keywordsSection.createEl('p', {
-                    text: 'No keywords in this group yet. Add keywords below or assign them from the Keywords tab.',
-                    cls: 'akl-hint-text'
-                });
-            } else {
-                const keywordsList = keywordsSection.createDiv({cls: 'akl-keywords-list'});
-                keywordsInGroup.forEach(kw => {
-                    const kwChip = keywordsList.createDiv({cls: 'akl-keyword-chip'});
-                    kwChip.createSpan({text: kw.keyword || 'Untitled'});
-                    const removeBtn = kwChip.createSpan({text: '×', cls: 'akl-chip-remove'});
-                    removeBtn.addEventListener('click', async () => {
-                        kw.groupId = null;
-                        await this.plugin.saveSettings();
-                        this.display();
-                    });
-                });
-            }
-
-            // Add keywords button
-            const addKeywordsBtn = keywordsSection.createEl('button', {
-                text: '+ Add Keywords to Group',
-                cls: 'akl-button-secondary'
-            });
-            addKeywordsBtn.addEventListener('click', () => {
-                // Open fuzzy search modal to select keywords
-                // Fetch current keywords in group dynamically to avoid stale data
-                const currentKeywordsInGroup = this.plugin.settings.keywords.filter(kw => kw.groupId === group.id);
-                new KeywordGroupAssignModal(this.app, this.plugin, group.id, currentKeywordsInGroup).open();
-            });
-
-            // Group settings section
-            const settingsSection = cardBody.createDiv({cls: 'akl-group-settings-section'});
-            settingsSection.createEl('h4', {text: 'Group Settings', cls: 'akl-subsection-header'});
-            settingsSection.createEl('p', {
-                text: 'These settings apply to all keywords in this group (unless overridden per-keyword).',
-                cls: 'akl-hint-text'
-            });
-
-            // Link scope dropdown
-            new Setting(settingsSection)
-                .setName('Link scope')
-                .setDesc('Where this group\'s keywords should create links')
-                .addDropdown(dropdown => dropdown
-                    .addOption('vault-wide', 'Vault-wide (link in all notes)')
-                    .addOption('source-folder', 'Source folder only')
-                    .addOption('target-folder', 'Target folder only')
-                    .setValue(group.settings.linkScope || 'vault-wide')
-                    .onChange(async (value) => {
-                        group.settings.linkScope = value;
-                        await this.plugin.saveSettings();
-                    }));
-
-            // Enable tags toggle
-            new Setting(settingsSection)
-                .setName('Enable tags')
-                .setDesc('Add #tag to target notes when linking')
-                .addToggle(toggle => toggle
-                    .setValue(group.settings.enableTags || false)
-                    .onChange(async (value) => {
-                        group.settings.enableTags = value;
-                        await this.plugin.saveSettings();
-                    }));
-
-            // Suggest mode toggle
-            new Setting(settingsSection)
-                .setName('Suggest mode')
-                .setDesc('Suggest links instead of creating them automatically')
-                .addToggle(toggle => toggle
-                    .setValue(group.settings.suggestMode || false)
-                    .onChange(async (value) => {
-                        group.settings.suggestMode = value;
-                        await this.plugin.saveSettings();
-                    }));
-
-            // Use relative links toggle
-            new Setting(settingsSection)
-                .setName('Use Markdown links')
-                .setDesc('Use [text](link.md) format instead of [[wikilinks]]')
-                .addToggle(toggle => toggle
-                    .setValue(group.settings.useRelativeLinks || false)
-                    .onChange(async (value) => {
-                        group.settings.useRelativeLinks = value;
-                        await this.plugin.saveSettings();
-                    }));
-
-            // Prevent self-link toggle
-            new Setting(settingsSection)
-                .setName('Prevent self-links')
-                .setDesc('Don\'t link keywords on their own target note')
-                .addToggle(toggle => toggle
-                    .setValue(group.settings.preventSelfLink || false)
-                    .onChange(async (value) => {
-                        group.settings.preventSelfLink = value;
-                        await this.plugin.saveSettings();
-                    }));
-        }
-    }
-
-    /**
-     * Render variation chips with remove buttons
-     * @param {HTMLElement} container - Container for chips
-     * @param {Array} variations - Array of variation strings
-     * @param {number} keywordIndex - Index of the keyword in settings
-     */
-    renderVariationChips(container, variations, keywordIndex) {
-        // Don't empty container - we'll add both manual and auto chips
-
-        if (variations.length === 0) {
-            // Only show "no variations" if there are also no aliases coming
-            // This check will be done by the caller
-            return;
-        }
-
-        variations.forEach((variation, varIndex) => {
-            const chip = container.createDiv({cls: 'akl-chip'});
-            chip.createSpan({text: variation, cls: 'akl-chip-text'});
-
-            const removeBtn = chip.createSpan({text: '×', cls: 'akl-chip-remove'});
-            removeBtn.setAttribute('aria-label', `Remove ${variation}`);
-            removeBtn.addEventListener('click', async () => {
-                this.plugin.settings.keywords[keywordIndex].variations.splice(varIndex, 1);
-                await this.plugin.saveSettings();
-                this.display();
-            });
-        });
-    }
-
-    /**
-     * Render auto-discovered alias chips (from note frontmatter)
-     * These are shown with a different style and cannot be removed (auto-discovered)
-     * @param {HTMLElement} container - Container element
-     * @param {Array<string>} aliases - Array of auto-discovered aliases
-     */
-    renderAliasChips(container, aliases) {
-        if (!aliases || aliases.length === 0) {
-            return;
-        }
-
-        aliases.forEach(alias => {
-            const chip = container.createDiv({cls: 'akl-chip akl-chip-auto'});
-            chip.createSpan({text: alias, cls: 'akl-chip-text'});
-
-            // Add a small indicator that this is auto-discovered
-            const autoIndicator = chip.createSpan({text: '🔗', cls: 'akl-chip-auto-indicator'});
-            autoIndicator.setAttribute('aria-label', 'Auto-discovered from note alias');
-            autoIndicator.setAttribute('title', 'Auto-discovered from note frontmatter');
-        });
-    }
-
-    /**
-     * Get all unique folders in the vault
-     * @returns {Array<string>} Sorted array of folder paths
-     */
-    getAllFolders() {
-        const folders = new Set();
-
-        // Get all folders from the vault
-        const allFolders = this.app.vault.getAllLoadedFiles()
-            .filter(f => f.children) // Only folders have children
-            .map(f => f.path);
-
-        allFolders.forEach(folder => {
-            if (folder && folder !== '/') {
-                folders.add(folder);
-            }
-        });
-
-        // Sort alphabetically
-        return Array.from(folders).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
-    }
-
-    /**
-     * Add custom CSS styles for the improved UI
-     */
-    addCustomStyles() {
-        // Check if styles already exist
-        if (document.getElementById('akl-custom-styles')) {
-            return;
-        }
-
-        const styleEl = document.createElement('style');
-        styleEl.id = 'akl-custom-styles';
-        styleEl.textContent = `
-            /* Header */
-            .akl-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 1.5em;
-                flex-wrap: wrap;
-                gap: 0.5em;
-            }
-
-            .akl-stats {
-                color: var(--text-muted);
-                font-size: 0.9em;
-                padding: 0.25em 0.75em;
-                background: var(--background-secondary);
-                border-radius: 12px;
-            }
-
-            /* Tab Navigation */
+        /* Responsive: Wrap tabs on portrait phones */
+        @media (max-width: 600px) and (orientation: portrait) {
             .akl-tab-nav {
-                display: flex;
-                gap: 0.5em;
-                margin-bottom: 1.5em;
-                border-bottom: 2px solid var(--background-modifier-border);
-                padding-bottom: 0;
+                flex-wrap: wrap;
             }
 
             .akl-tab-button {
-                padding: 0.75em 1.25em;
-                background: transparent;
-                border: none;
-                border-bottom: 2px solid transparent;
-                color: var(--text-muted);
-                cursor: pointer;
-                font-size: 0.95em;
-                font-weight: 500;
-                transition: all 0.2s ease;
-                margin-bottom: -2px;
-            }
-
-            .akl-tab-button:hover {
-                color: var(--text-normal);
-                background: var(--background-modifier-hover);
-            }
-
-            .akl-tab-active {
-                color: var(--interactive-accent) !important;
-                border-bottom-color: var(--interactive-accent) !important;
-            }
-
-            /* Responsive: Wrap tabs on portrait phones */
-            @media (max-width: 600px) and (orientation: portrait) {
-                .akl-tab-nav {
-                    flex-wrap: wrap;
-                }
-
-                .akl-tab-button {
-                    padding: 0.6em 1em;
-                    font-size: 0.9em;
-                    flex: 0 1 auto;
-                }
-            }
-
-            .akl-tab-content {
-                animation: fadeIn 0.2s ease;
-            }
-
-            @keyframes fadeIn {
-                from { opacity: 0; }
-                to { opacity: 1; }
-            }
-
-            .akl-stats-bar {
-                color: var(--text-muted);
-                font-size: 0.9em;
-                padding: 0.75em 1em;
-                background: var(--background-secondary);
-                border-radius: 8px;
-                margin-bottom: 1.5em;
-            }
-
-            /* Section Headers */
-            .akl-section-header {
-                margin-top: 2em;
-                margin-bottom: 1em;
-            }
-
-            .akl-subsection-header {
-                margin-top: 1.5em;
-                margin-bottom: 0.75em;
-                font-size: 1em;
-                font-weight: 600;
-            }
-
-            /* Empty State */
-            .akl-empty-state {
-                text-align: center;
-                padding: 3em 2em;
-                color: var(--text-muted);
-            }
-
-            .akl-empty-state p:first-child {
-                font-size: 1.1em;
-                font-weight: 500;
-                margin-bottom: 0.5em;
-                color: var(--text-normal);
-            }
-
-            .akl-empty-hint {
-                font-size: 0.9em;
-            }
-
-            .akl-hint-text {
-                color: var(--text-muted);
-                font-size: 0.9em;
-                margin: 0.5em 0;
-            }
-
-            /* Group-specific styles */
-            .akl-group-card {
-                border-left: 3px solid var(--interactive-accent);
-            }
-
-            .akl-groups-container {
-                display: grid;
-                gap: 1em;
-                margin-bottom: 1em;
-            }
-
-            .akl-group-keywords-section,
-            .akl-group-settings-section {
-                margin-top: 1.5em;
-                padding-top: 1.5em;
-                border-top: 1px solid var(--background-modifier-border);
-            }
-
-            .akl-keywords-list {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 0.5em;
-                margin: 1em 0;
-            }
-
-            .akl-keyword-chip {
-                display: inline-flex;
-                align-items: center;
-                gap: 0.5em;
-                padding: 0.4em 0.8em;
-                background: var(--background-secondary);
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 12px;
-                font-size: 0.9em;
-                transition: all 0.2s ease;
-            }
-
-            .akl-keyword-chip:hover {
-                background: var(--background-modifier-hover);
-            }
-
-            .akl-chip-remove {
-                cursor: pointer;
-                color: var(--text-muted);
-                font-size: 1.2em;
-                line-height: 1;
-                transition: color 0.2s ease;
-            }
-
-            .akl-chip-remove:hover {
-                color: var(--text-error);
-            }
-
-            .akl-button-secondary {
-                padding: 0.6em 1.2em;
-                background: var(--background-secondary);
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 6px;
-                color: var(--text-normal);
-                cursor: pointer;
-                font-size: 0.9em;
-                transition: all 0.2s ease;
-            }
-
-            .akl-button-secondary:hover {
-                background: var(--background-modifier-hover);
-                border-color: var(--interactive-accent);
-            }
-
-            .akl-delete-btn {
-                padding: 0.5em 1em;
-                background: transparent;
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 6px;
-                color: var(--text-muted);
-                cursor: pointer;
-                font-size: 0.85em;
-                transition: all 0.2s ease;
-            }
-
-            .akl-delete-btn:hover {
-                background: var(--background-modifier-error);
-                border-color: var(--text-error);
-                color: var(--text-on-accent);
-            }
-
-            .akl-section-header h3 {
-                margin-bottom: 0.25em;
-            }
-
-            .akl-section-desc {
-                color: var(--text-muted);
-                margin-top: 0;
-            }
-
-            /* Search Container */
-            .akl-search-container {
-                margin-bottom: 1em;
-            }
-
-            .akl-search-input {
-                width: 100%;
                 padding: 0.6em 1em;
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 6px;
-                background: var(--background-primary);
-                color: var(--text-normal);
-                font-size: 0.95em;
-                transition: border-color 0.2s ease, box-shadow 0.2s ease;
-            }
-
-            .akl-search-input:focus {
-                outline: none;
-                border-color: var(--interactive-accent);
-                box-shadow: 0 0 0 2px var(--interactive-accent-hover);
-            }
-
-            .akl-search-input::placeholder {
-                color: var(--text-muted);
-            }
-
-            /* No Results Message */
-            .akl-no-results {
-                text-align: center;
-                padding: 3em 2em;
-                color: var(--text-muted);
-            }
-
-            .akl-no-results p:first-child {
-                font-size: 1.1em;
-                font-weight: 500;
-                margin-bottom: 0.5em;
-                color: var(--text-normal);
-            }
-
-            .akl-no-results-hint {
                 font-size: 0.9em;
+                flex: 0 1 auto;
             }
+        }
 
-            /* Keywords Container */
+        .akl-tab-content {
+            animation: fadeIn 0.2s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .akl-stats-bar {
+            color: var(--text-muted);
+            font-size: 0.9em;
+            padding: 0.75em 1em;
+            background: var(--background-secondary);
+            border-radius: 8px;
+            margin-bottom: 1.5em;
+        }
+
+        /* Section Headers */
+        .akl-section-header {
+            margin-top: 2em;
+            margin-bottom: 1em;
+        }
+
+        .akl-subsection-header {
+            margin-top: 1.5em;
+            margin-bottom: 0.75em;
+            font-size: 1em;
+            font-weight: 600;
+        }
+
+        /* Empty State */
+        .akl-empty-state {
+            text-align: center;
+            padding: 3em 2em;
+            color: var(--text-muted);
+        }
+
+        .akl-empty-state p:first-child {
+            font-size: 1.1em;
+            font-weight: 500;
+            margin-bottom: 0.5em;
+            color: var(--text-normal);
+        }
+
+        .akl-empty-hint {
+            font-size: 0.9em;
+        }
+
+        .akl-hint-text {
+            color: var(--text-muted);
+            font-size: 0.9em;
+            margin: 0.5em 0;
+        }
+
+        /* Group-specific styles */
+        .akl-group-card {
+            border-left: 3px solid var(--interactive-accent);
+        }
+
+        .akl-groups-container {
+            display: grid;
+            gap: 1em;
+            margin-bottom: 1em;
+        }
+
+        .akl-group-keywords-section,
+        .akl-group-settings-section {
+            margin-top: 1.5em;
+            padding-top: 1.5em;
+            border-top: 1px solid var(--background-modifier-border);
+        }
+
+        .akl-keywords-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5em;
+            margin: 1em 0;
+        }
+
+        .akl-keyword-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5em;
+            padding: 0.4em 0.8em;
+            background: var(--background-secondary);
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 12px;
+            font-size: 0.9em;
+            transition: all 0.2s ease;
+        }
+
+        .akl-keyword-chip:hover {
+            background: var(--background-modifier-hover);
+        }
+
+        .akl-chip-remove {
+            cursor: pointer;
+            color: var(--text-muted);
+            font-size: 1.2em;
+            line-height: 1;
+            transition: color 0.2s ease;
+        }
+
+        .akl-chip-remove:hover {
+            color: var(--text-error);
+        }
+
+        .akl-button-secondary {
+            padding: 0.6em 1.2em;
+            background: var(--background-secondary);
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 6px;
+            color: var(--text-normal);
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.2s ease;
+        }
+
+        .akl-button-secondary:hover {
+            background: var(--background-modifier-hover);
+            border-color: var(--interactive-accent);
+        }
+
+        .akl-delete-btn {
+            padding: 0.5em 1em;
+            background: transparent;
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 6px;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.2s ease;
+        }
+
+        .akl-delete-btn:hover {
+            background: var(--background-modifier-error);
+            border-color: var(--text-error);
+            color: var(--text-on-accent);
+        }
+
+        .akl-section-header h3 {
+            margin-bottom: 0.25em;
+        }
+
+        .akl-section-desc {
+            color: var(--text-muted);
+            margin-top: 0;
+        }
+
+        /* Search Container */
+        .akl-search-container {
+            margin-bottom: 1em;
+        }
+
+        .akl-search-input {
+            width: 100%;
+            padding: 0.6em 1em;
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 6px;
+            background: var(--background-primary);
+            color: var(--text-normal);
+            font-size: 0.95em;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .akl-search-input:focus {
+            outline: none;
+            border-color: var(--interactive-accent);
+            box-shadow: 0 0 0 2px var(--interactive-accent-hover);
+        }
+
+        .akl-search-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        /* No Results Message */
+        .akl-no-results {
+            text-align: center;
+            padding: 3em 2em;
+            color: var(--text-muted);
+        }
+
+        .akl-no-results p:first-child {
+            font-size: 1.1em;
+            font-weight: 500;
+            margin-bottom: 0.5em;
+            color: var(--text-normal);
+        }
+
+        .akl-no-results-hint {
+            font-size: 0.9em;
+        }
+
+        /* Keywords Container */
+        .akl-keywords-container {
+            display: grid;
+            gap: 1em;
+            margin-bottom: 1em;
+        }
+
+        /* Keyword Card */
+        .akl-keyword-card {
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 8px;
+            background: var(--background-primary);
+            overflow: hidden;
+            transition: box-shadow 0.2s ease, transform 0.2s ease;
+        }
+
+        .akl-keyword-card:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Card Header */
+        .akl-card-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75em;
+            padding: 1em;
+            background: var(--background-secondary);
+            cursor: pointer;
+            border-bottom: 1px solid var(--background-modifier-border);
+        }
+
+        .akl-card-header:hover {
+            background: var(--background-modifier-hover);
+        }
+
+        .akl-collapse-btn {
+            font-size: 0.8em;
+            color: var(--text-muted);
+            user-select: none;
+            flex-shrink: 0;
+            width: 20px;
+            text-align: center;
+        }
+
+        .akl-card-title {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+            font-weight: 500;
+            flex-wrap: wrap;
+        }
+
+        .akl-keyword-name {
+            color: var(--text-normal);
+            font-size: 1.05em;
+        }
+
+        .akl-target-name {
+            color: var(--text-muted);
+            font-size: 0.9em;
+        }
+
+        .akl-card-badges {
+            display: flex;
+            gap: 0.5em;
+            flex-wrap: wrap;
+        }
+
+        .akl-badge {
+            padding: 0.25em 0.6em;
+            border-radius: 10px;
+            font-size: 0.75em;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        .akl-badge-tags {
+            background: var(--color-accent);
+            color: white;
+        }
+
+        .akl-badge-md-links {
+            background: var(--interactive-accent);
+            color: white;
+        }
+
+        .akl-badge-suggest {
+            background: #ffaa00;
+            color: white;
+        }
+
+        .akl-badge-group {
+            background: var(--interactive-accent);
+            color: white;
+        }
+
+        .akl-badge-variations {
+            background: var(--background-modifier-border);
+            color: var(--text-muted);
+        }
+
+        /* Suggested Link Styles */
+        .akl-suggested-link {
+            background-color: rgba(255, 170, 0, 0.15);
+            border-bottom: 2px dotted #ffaa00;
+            cursor: pointer;
+            position: relative;
+            transition: background-color 0.2s ease;
+        }
+
+        .akl-suggested-link:hover {
+            background-color: rgba(255, 170, 0, 0.25);
+        }
+
+        /* Card Body */
+        .akl-card-body {
+            padding: 1em;
+        }
+
+        .akl-card-body .setting-item {
+            border: none;
+            padding: 0.75em 0;
+        }
+
+        .akl-input {
+            width: 100%;
+        }
+
+        /* Variations Section */
+        .akl-variations-section {
+            padding: 0.75em 0;
+            border-top: 1px solid var(--background-modifier-border);
+            margin-top: 0.5em;
+        }
+
+        .akl-variations-section .setting-item-name {
+            font-weight: 500;
+            margin-bottom: 0.25em;
+        }
+
+        .akl-variations-section .setting-item-description {
+            color: var(--text-muted);
+            font-size: 0.85em;
+            margin-bottom: 0.75em;
+        }
+
+        .akl-chips-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5em;
+            margin-bottom: 0.75em;
+            min-height: 2em;
+            align-items: center;
+        }
+
+        .akl-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4em;
+            padding: 0.35em 0.7em;
+            background: var(--background-secondary);
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 14px;
+            font-size: 0.9em;
+            transition: background-color 0.2s ease;
+        }
+
+        .akl-chip:hover {
+            background: var(--background-modifier-hover);
+        }
+
+        .akl-chip-text {
+            color: var(--text-normal);
+        }
+
+        .akl-chip-remove {
+            color: var(--text-muted);
+            font-size: 1.2em;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0 0.2em;
+            border-radius: 50%;
+            transition: color 0.2s ease, background-color 0.2s ease;
+        }
+
+        .akl-chip-remove:hover {
+            color: var(--text-error);
+            background: var(--background-modifier-error);
+        }
+
+        /* Auto-discovered alias chips - different style */
+        .akl-chip-auto {
+            background: var(--interactive-accent-hover);
+            border: 1px solid var(--interactive-accent);
+            opacity: 0.85;
+        }
+
+        .akl-chip-auto:hover {
+            opacity: 1;
+            background: var(--interactive-accent-hover);
+        }
+
+        .akl-chip-auto-indicator {
+            font-size: 0.9em;
+            opacity: 0.7;
+        }
+
+        .akl-no-variations {
+            color: var(--text-muted);
+            font-style: italic;
+            font-size: 0.9em;
+        }
+
+        .akl-add-variation {
+            margin-top: 0.5em;
+        }
+
+        .akl-variation-input {
+            width: 100%;
+            padding: 0.5em;
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 4px;
+            background: var(--background-primary);
+            color: var(--text-normal);
+            font-size: 0.9em;
+        }
+
+        .akl-variation-input:focus {
+            border-color: var(--color-accent);
+            outline: none;
+        }
+
+        /* Card Footer */
+        .akl-card-footer {
+            display: flex;
+            justify-content: flex-end;
+            padding-top: 0.75em;
+            margin-top: 0.75em;
+            border-top: 1px solid var(--background-modifier-border);
+        }
+
+        .akl-delete-btn {
+            padding: 0.5em 1em;
+            background: transparent;
+            color: var(--text-error);
+            border: 1px solid var(--text-error);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background-color 0.2s ease, color 0.2s ease;
+        }
+
+        .akl-delete-btn:hover {
+            background: var(--text-error);
+            color: white;
+        }
+
+        /* Add Button Container */
+        .akl-add-button-container {
+            display: flex;
+            justify-content: center;
+            margin: 1.5em 0;
+        }
+
+        .akl-add-button {
+            padding: 0.75em 1.5em;
+            font-size: 1em;
+        }
+
+        /* Responsive Design */
+        @media (min-width: 768px) {
             .akl-keywords-container {
-                display: grid;
-                gap: 1em;
-                margin-bottom: 1em;
+                grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
             }
+        }
 
-            /* Keyword Card */
-            .akl-keyword-card {
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 8px;
-                background: var(--background-primary);
-                overflow: hidden;
-                transition: box-shadow 0.2s ease, transform 0.2s ease;
-            }
-
-            .akl-keyword-card:hover {
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            }
-
-            /* Card Header */
+        @media (max-width: 767px) {
+            /* Keep everything on one line on narrow screens */
             .akl-card-header {
-                display: flex;
-                align-items: center;
-                gap: 0.75em;
-                padding: 1em;
-                background: var(--background-secondary);
-                cursor: pointer;
-                border-bottom: 1px solid var(--background-modifier-border);
-            }
-
-            .akl-card-header:hover {
-                background: var(--background-modifier-hover);
+                flex-wrap: nowrap;
+                padding: 0.75em 0.5em;
+                gap: 0.4em;
             }
 
             .akl-collapse-btn {
-                font-size: 0.8em;
-                color: var(--text-muted);
-                user-select: none;
-                flex-shrink: 0;
-                width: 20px;
-                text-align: center;
+                font-size: 0.7em;
+                width: 16px;
             }
 
             .akl-card-title {
                 flex: 1;
-                display: flex;
-                align-items: center;
-                gap: 0.5em;
-                font-weight: 500;
-                flex-wrap: wrap;
+                min-width: 0;
+                overflow: hidden;
             }
 
             .akl-keyword-name {
-                color: var(--text-normal);
-                font-size: 1.05em;
+                font-size: 0.9em;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                max-width: 100%;
             }
 
             .akl-target-name {
-                color: var(--text-muted);
-                font-size: 0.9em;
+                font-size: 0.8em;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
             }
 
             .akl-card-badges {
-                display: flex;
-                gap: 0.5em;
-                flex-wrap: wrap;
+                flex-shrink: 0;
             }
 
             .akl-badge {
-                padding: 0.25em 0.6em;
-                border-radius: 10px;
-                font-size: 0.75em;
-                font-weight: 500;
-                white-space: nowrap;
+                padding: 0.2em 0.4em;
+                font-size: 0.65em;
             }
 
-            .akl-badge-tags {
-                background: var(--color-accent);
-                color: white;
+            .akl-header {
+                flex-direction: column;
+                align-items: flex-start;
             }
-
-            .akl-badge-md-links {
-                background: var(--interactive-accent);
-                color: white;
-            }
-
-            .akl-badge-suggest {
-                background: #ffaa00;
-                color: white;
-            }
-
-            .akl-badge-group {
-                background: var(--interactive-accent);
-                color: white;
-            }
-
-            .akl-badge-variations {
-                background: var(--background-modifier-border);
-                color: var(--text-muted);
-            }
-
-            /* Suggested Link Styles */
-            .akl-suggested-link {
-                background-color: rgba(255, 170, 0, 0.15);
-                border-bottom: 2px dotted #ffaa00;
-                cursor: pointer;
-                position: relative;
-                transition: background-color 0.2s ease;
-            }
-
-            .akl-suggested-link:hover {
-                background-color: rgba(255, 170, 0, 0.25);
-            }
-
-            /* Card Body */
-            .akl-card-body {
-                padding: 1em;
-            }
-
-            .akl-card-body .setting-item {
-                border: none;
-                padding: 0.75em 0;
-            }
-
-            .akl-input {
-                width: 100%;
-            }
-
-            /* Variations Section */
-            .akl-variations-section {
-                padding: 0.75em 0;
-                border-top: 1px solid var(--background-modifier-border);
-                margin-top: 0.5em;
-            }
-
-            .akl-variations-section .setting-item-name {
-                font-weight: 500;
-                margin-bottom: 0.25em;
-            }
-
-            .akl-variations-section .setting-item-description {
-                color: var(--text-muted);
-                font-size: 0.85em;
-                margin-bottom: 0.75em;
-            }
-
-            .akl-chips-container {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 0.5em;
-                margin-bottom: 0.75em;
-                min-height: 2em;
-                align-items: center;
-            }
-
-            .akl-chip {
-                display: inline-flex;
-                align-items: center;
-                gap: 0.4em;
-                padding: 0.35em 0.7em;
-                background: var(--background-secondary);
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 14px;
-                font-size: 0.9em;
-                transition: background-color 0.2s ease;
-            }
-
-            .akl-chip:hover {
-                background: var(--background-modifier-hover);
-            }
-
-            .akl-chip-text {
-                color: var(--text-normal);
-            }
-
-            .akl-chip-remove {
-                color: var(--text-muted);
-                font-size: 1.2em;
-                line-height: 1;
-                cursor: pointer;
-                padding: 0 0.2em;
-                border-radius: 50%;
-                transition: color 0.2s ease, background-color 0.2s ease;
-            }
-
-            .akl-chip-remove:hover {
-                color: var(--text-error);
-                background: var(--background-modifier-error);
-            }
-
-            /* Auto-discovered alias chips - different style */
-            .akl-chip-auto {
-                background: var(--interactive-accent-hover);
-                border: 1px solid var(--interactive-accent);
-                opacity: 0.85;
-            }
-
-            .akl-chip-auto:hover {
-                opacity: 1;
-                background: var(--interactive-accent-hover);
-            }
-
-            .akl-chip-auto-indicator {
-                font-size: 0.9em;
-                opacity: 0.7;
-            }
-
-            .akl-no-variations {
-                color: var(--text-muted);
-                font-style: italic;
-                font-size: 0.9em;
-            }
-
-            .akl-add-variation {
-                margin-top: 0.5em;
-            }
-
-            .akl-variation-input {
-                width: 100%;
-                padding: 0.5em;
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 4px;
-                background: var(--background-primary);
-                color: var(--text-normal);
-                font-size: 0.9em;
-            }
-
-            .akl-variation-input:focus {
-                border-color: var(--color-accent);
-                outline: none;
-            }
-
-            /* Card Footer */
-            .akl-card-footer {
-                display: flex;
-                justify-content: flex-end;
-                padding-top: 0.75em;
-                margin-top: 0.75em;
-                border-top: 1px solid var(--background-modifier-border);
-            }
-
-            .akl-delete-btn {
-                padding: 0.5em 1em;
-                background: transparent;
-                color: var(--text-error);
-                border: 1px solid var(--text-error);
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 0.9em;
-                transition: background-color 0.2s ease, color 0.2s ease;
-            }
-
-            .akl-delete-btn:hover {
-                background: var(--text-error);
-                color: white;
-            }
-
-            /* Add Button Container */
-            .akl-add-button-container {
-                display: flex;
-                justify-content: center;
-                margin: 1.5em 0;
-            }
-
-            .akl-add-button {
-                padding: 0.75em 1.5em;
-                font-size: 1em;
-            }
-
-            /* Responsive Design */
-            @media (min-width: 768px) {
-                .akl-keywords-container {
-                    grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
-                }
-            }
-
-            @media (max-width: 767px) {
-                /* Keep everything on one line on narrow screens */
-                .akl-card-header {
-                    flex-wrap: nowrap;
-                    padding: 0.75em 0.5em;
-                    gap: 0.4em;
-                }
-
-                .akl-collapse-btn {
-                    font-size: 0.7em;
-                    width: 16px;
-                }
-
-                .akl-card-title {
-                    flex: 1;
-                    min-width: 0;
-                    overflow: hidden;
-                }
-
-                .akl-keyword-name {
-                    font-size: 0.9em;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    max-width: 100%;
-                }
-
-                .akl-target-name {
-                    font-size: 0.8em;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                }
-
-                .akl-card-badges {
-                    flex-shrink: 0;
-                }
-
-                .akl-badge {
-                    padding: 0.2em 0.4em;
-                    font-size: 0.65em;
-                }
-
-                .akl-header {
-                    flex-direction: column;
-                    align-items: flex-start;
-                }
-            }
-
-            /* Dark mode adjustments */
-            .theme-dark .akl-keyword-card:hover {
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-            }
-
-            /* Animations */
-            @keyframes slideIn {
-                from {
-                    opacity: 0;
-                    transform: translateY(-10px);
-                }
-                to {
-                    opacity: 1;
-                    transform: translateY(0);
-                }
-            }
-
-            .akl-keyword-card {
-                animation: slideIn 0.2s ease-out;
-            }
-
-            /* Suggested Keyword Builder Modal Styles */
-            .akl-suggestion-modal {
-                max-width: 700px;
-                max-height: 80vh;
-                overflow-y: auto;
-            }
-
-            .akl-status {
-                margin-bottom: 1em;
-                padding: 1em;
-                background: var(--background-secondary);
-                border-radius: 6px;
-            }
-
-            .akl-analyzing {
-                color: var(--text-muted);
-                font-style: italic;
-            }
-
-            .akl-error {
-                color: var(--text-error);
-            }
-
-            .akl-search-container {
-                margin-bottom: 1em;
-            }
-
-            .akl-search-input {
-                width: 100%;
-                padding: 0.6em;
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 4px;
-                background: var(--background-primary);
-                color: var(--text-normal);
-                font-size: 0.95em;
-            }
-
-            .akl-search-input:focus {
-                outline: none;
-                border-color: var(--color-accent);
-            }
-
-            .akl-controls-container {
-                display: flex;
-                gap: 1em;
-                margin-bottom: 1em;
-                flex-wrap: wrap;
-            }
-
-            .akl-sort-container {
-                display: flex;
-                align-items: center;
-                gap: 0.5em;
-            }
-
-            .akl-sort-label {
-                color: var(--text-muted);
-                font-size: 0.9em;
-                white-space: nowrap;
-            }
-
-            .akl-sort-select {
-                padding: 0.5em 0.8em;
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 4px;
-                background: var(--background-primary);
-                color: var(--text-normal);
-                font-size: 0.9em;
-                cursor: pointer;
-            }
-
-            .akl-sort-select:focus {
-                outline: none;
-                border-color: var(--color-accent);
-            }
-
-            .akl-button-row {
-                display: flex;
-                gap: 0.5em;
-                margin-bottom: 1em;
-            }
-
-            .akl-mini-button {
-                padding: 0.4em 0.8em;
-                font-size: 0.85em;
-                background: var(--background-secondary);
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 4px;
-                cursor: pointer;
-                color: var(--text-normal);
-            }
-
-            .akl-mini-button:hover {
-                background: var(--background-modifier-hover);
-            }
-
-            .akl-suggestions-list {
-                max-height: 400px;
-                overflow-y: auto;
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 6px;
-                padding: 0.5em;
-                background: var(--background-primary);
-                margin-bottom: 1em;
-            }
-
-            .akl-suggestion-item {
-                padding: 0.75em;
-                margin-bottom: 0.5em;
-                background: var(--background-secondary);
-                border-radius: 4px;
-                border: 1px solid var(--background-modifier-border);
-            }
-
-            .akl-suggestion-item:hover {
-                background: var(--background-modifier-hover);
-            }
-
-            .akl-suggestion-header {
-                display: flex;
-                align-items: center;
-                gap: 0.75em;
-                margin-bottom: 0.5em;
-            }
-
-            .akl-checkbox {
-                cursor: pointer;
-                width: 16px;
-                height: 16px;
-            }
-
-            .akl-suggestion-label {
-                flex: 1;
-            }
-
-            .akl-keyword-text {
-                font-weight: 500;
-                color: var(--text-normal);
-            }
-
-            .akl-count-text {
-                color: var(--text-muted);
-                font-size: 0.9em;
-            }
-
-            .akl-notes-preview {
-                margin-bottom: 0.5em;
-                padding-left: 2em;
-                font-size: 0.85em;
-            }
-
-            .akl-notes-label {
-                color: var(--text-muted);
-                font-weight: 500;
-            }
-
-            .akl-notes-list {
-                color: var(--text-muted);
-                font-style: italic;
-            }
-
-            .akl-variation-selector {
-                padding-left: 2em;
-                display: flex;
-                align-items: center;
-                gap: 0.5em;
-                font-size: 0.85em;
-            }
-
-            .akl-variation-label {
-                color: var(--text-muted);
-            }
-
-            .akl-variation-dropdown {
-                flex: 1;
-                padding: 0.3em;
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 4px;
-                background: var(--background-primary);
-                color: var(--text-normal);
-            }
-
-            .akl-no-results {
-                text-align: center;
-                padding: 2em;
-                color: var(--text-muted);
-                font-style: italic;
-            }
-
-            .akl-action-row {
-                display: flex;
-                justify-content: flex-end;
-                gap: 0.75em;
-                margin-top: 1em;
-            }
-
-            .akl-action-row button {
-                padding: 0.6em 1.2em;
-            }
-        `;
-
-        document.head.appendChild(styleEl);
-    }
-}
-/**
- * Keyword Group Assign Modal - Fuzzy search to assign keywords to a group
- */
-class KeywordGroupAssignModal extends FuzzySuggestModal {
-    constructor(app, plugin, groupId, currentKeywords) {
-        super(app);
-        this.plugin = plugin;
-        this.groupId = groupId;
-        this.currentKeywordIds = new Set(currentKeywords.map(kw => kw.id));
-    }
-
-    getItems() {
-        // Get all keywords that are not already in this group
-        return this.plugin.settings.keywords.filter(kw => !this.currentKeywordIds.has(kw.id));
-    }
-
-    getItemText(keyword) {
-        const groupInfo = keyword.groupId ? ' [In another group]' : '';
-        return `${keyword.keyword || 'Untitled'} → ${keyword.target || '(no target)'}${groupInfo}`;
-    }
-
-    async onChooseItem(keyword) {
-        // Assign keyword to this group
-        keyword.groupId = this.groupId;
-
-        // Reset keyword-specific settings to null so they inherit from the group
-        keyword.enableTags = null;
-        keyword.linkScope = null;
-        keyword.scopeFolder = null;
-        keyword.useRelativeLinks = null;
-        keyword.blockRef = null;
-        keyword.requireTag = null;
-        keyword.onlyInNotesLinkingTo = null;
-        keyword.suggestMode = null;
-        keyword.preventSelfLink = null;
-
-        await this.plugin.saveSettings();
-
-        // Show notice that group settings will be applied to future links
-        new Notice(`Keyword "${keyword.keyword}" assigned to group. Group settings will apply to new links.`);
-
-        // Refresh the settings display
-        const settingTab = this.app.setting.activeTab;
-        if (settingTab instanceof AutoKeywordLinkerSettingTab) {
-            settingTab.display();
         }
-    }
-}
 
-/**
- * Folder Suggest Modal - Searchable folder picker with fuzzy matching
- */
-class FolderSuggestModal extends FuzzySuggestModal {
-    constructor(app, folders, currentValue, onChoose) {
-        super(app);
-        this.folders = folders;
-        this.currentValue = currentValue;
-        this.onChooseCallback = onChoose;
-    }
+        /* Dark mode adjustments */
+        .theme-dark .akl-keyword-card:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
 
-    getItems() {
-        return this.folders;
-    }
+        /* Animations */
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
 
-    getItemText(folder) {
-        return folder || '/ (Root)';
-    }
+        .akl-keyword-card {
+            animation: slideIn 0.2s ease-out;
+        }
 
-    onChooseItem(folder, evt) {
-        this.onChooseCallback(folder);
-    }
-}
+        /* Suggested Keyword Builder Modal Styles */
+        .akl-suggestion-modal {
+            max-width: 700px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
 
-/**
- * Note Suggest Modal - Searchable note picker with fuzzy matching
- */
-class NoteSuggestModal extends FuzzySuggestModal {
-    constructor(app, notes, currentValue, onChoose) {
-        super(app);
-        this.notes = notes;
-        this.currentValue = currentValue;
-        this.onChooseCallback = onChoose;
-    }
+        .akl-status {
+            margin-bottom: 1em;
+            padding: 1em;
+            background: var(--background-secondary);
+            border-radius: 6px;
+        }
 
-    getItems() {
-        return this.notes;
-    }
+        .akl-analyzing {
+            color: var(--text-muted);
+            font-style: italic;
+        }
 
-    getItemText(note) {
-        return note;
-    }
+        .akl-error {
+            color: var(--text-error);
+        }
 
-    onChooseItem(note, evt) {
-        this.onChooseCallback(note);
-    }
-}
+        .akl-search-container {
+            margin-bottom: 1em;
+        }
+
+        .akl-search-input {
+            width: 100%;
+            padding: 0.6em;
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 4px;
+            background: var(--background-primary);
+            color: var(--text-normal);
+            font-size: 0.95em;
+        }
+
+        .akl-search-input:focus {
+            outline: none;
+            border-color: var(--color-accent);
+        }
+
+        .akl-controls-container {
+            display: flex;
+            gap: 1em;
+            margin-bottom: 1em;
+            flex-wrap: wrap;
+        }
+
+        .akl-sort-container {
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+        }
+
+        .akl-sort-label {
+            color: var(--text-muted);
+            font-size: 0.9em;
+            white-space: nowrap;
+        }
+
+        .akl-sort-select {
+            padding: 0.5em 0.8em;
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 4px;
+            background: var(--background-primary);
+            color: var(--text-normal);
+            font-size: 0.9em;
+            cursor: pointer;
+        }
+
+        .akl-sort-select:focus {
+            outline: none;
+            border-color: var(--color-accent);
+        }
+
+        .akl-button-row {
+            display: flex;
+            gap: 0.5em;
+            margin-bottom: 1em;
+        }
+
+        .akl-mini-button {
+            padding: 0.4em 0.8em;
+            font-size: 0.85em;
+            background: var(--background-secondary);
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 4px;
+            cursor: pointer;
+            color: var(--text-normal);
+        }
+
+        .akl-mini-button:hover {
+            background: var(--background-modifier-hover);
+        }
+
+        .akl-suggestions-list {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 6px;
+            padding: 0.5em;
+            background: var(--background-primary);
+            margin-bottom: 1em;
+        }
+
+        .akl-suggestion-item {
+            padding: 0.75em;
+            margin-bottom: 0.5em;
+            background: var(--background-secondary);
+            border-radius: 4px;
+            border: 1px solid var(--background-modifier-border);
+        }
+
+        .akl-suggestion-item:hover {
+            background: var(--background-modifier-hover);
+        }
+
+        .akl-suggestion-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75em;
+            margin-bottom: 0.5em;
+        }
+
+        .akl-checkbox {
+            cursor: pointer;
+            width: 16px;
+            height: 16px;
+        }
+
+        .akl-suggestion-label {
+            flex: 1;
+        }
+
+        .akl-keyword-text {
+            font-weight: 500;
+            color: var(--text-normal);
+        }
+
+        .akl-count-text {
+            color: var(--text-muted);
+            font-size: 0.9em;
+        }
+
+        .akl-notes-preview {
+            margin-bottom: 0.5em;
+            padding-left: 2em;
+            font-size: 0.85em;
+        }
+
+        .akl-notes-label {
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .akl-notes-list {
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        .akl-variation-selector {
+            padding-left: 2em;
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+            font-size: 0.85em;
+        }
+
+        .akl-variation-label {
+            color: var(--text-muted);
+        }
+
+        .akl-variation-dropdown {
+            flex: 1;
+            padding: 0.3em;
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 4px;
+            background: var(--background-primary);
+            color: var(--text-normal);
+        }
+
+        .akl-no-results {
+            text-align: center;
+            padding: 2em;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        .akl-action-row {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75em;
+            margin-top: 1em;
+        }
+
+        .akl-action-row button {
+            padding: 0.6em 1.2em;
+        }
+
+        /* Disabled settings (inherited from group) */
+        .akl-disabled-setting {
+            opacity: 0.6;
+        }
+
+        .akl-disabled-setting .setting-item-control {
+            pointer-events: none;
+        }
+
+        .akl-disabled-setting .setting-item-description {
+            font-style: italic;
+            color: var(--text-muted);
+        }
+    `,document.head.appendChild(a)}Bt.exports={addCustomStyles:no}});var Mt=D((Ua,Vt)=>{function ro(a){let e=null,t=new Map,o=new Set;a.registerEvent(a.app.vault.on("modify",s=>{s.extension==="md"&&!o.has(s.path)&&(o.add(s.path),a.linkKeywordsInFile(s,!1,!0).then(i=>{if(o.delete(s.path),i&&i.pendingTags){t.has(s.path)||t.set(s.path,{tagsToAdd:new Set,targetNotesForTags:new Map});let n=t.get(s.path);i.pendingTags.tagsToAdd.forEach(r=>n.tagsToAdd.add(r)),i.pendingTags.targetNotesForTags.forEach((r,l)=>{n.targetNotesForTags.set(l,r)}),e&&clearTimeout(e),e=setTimeout(async()=>{try{for(let[r,l]of t.entries()){let c=a.app.vault.getAbstractFileByPath(r);c&&c.extension==="md"&&(o.add(r),await a.addTagsToFile(c,Array.from(l.tagsToAdd),l.targetNotesForTags),setTimeout(()=>{o.delete(r)},100))}}finally{t.clear(),e=null}},1e3)}}))}))}Vt.exports={setupAutoLinkOnSave:ro}});var qt=D((Ja,Rt)=>{var{MarkdownView:io}=require("obsidian"),{escapeRegex:ae,getContext:lo}=(W(),P(U)),{getFrontmatterBounds:co,isInsideAlias:uo,isPartOfUrl:go,isInsideLinkOrCode:po,isInsideBlockReference:ho,isInsideTable:fo}=fe(),{getEffectiveKeywordSettings:Za,buildKeywordMap:ko,checkLinkScope:mo}=pe(),{findTargetFile:wo,getAliasesForNote:_a,noteHasTag:yo,noteHasLinkToTarget:vo,ensureNoteExists:bo}=re(),{sanitizeTagName:xo,addTagsToContent:So,addTagToTargetNote:Co}=me(),qe=class{constructor(e,t){this.app=e,this.settings=t}async linkKeywordsInFile(e,t=!1,o=!1){if(e.extension!=="md")return null;let s=this.app.workspace.getActiveViewOfType(io),n=s&&s.file.path===e.path?s.editor:null,r=null;n&&!t&&(r=n.getCursor());let l=await this.app.vault.read(e),c=l,u=l.length,d=co(l),h=0,f=[],p=new Set,g=new Map,k=ko(this.app,this.settings),w=Object.keys(k).sort((v,S)=>S.length-v.length),L=new Set,T=[];for(let v of w){let S=k[v].target,E=k[v].enableTags,F=k[v].linkScope||"vault-wide",z=k[v].scopeFolder||"",V=k[v].useRelativeLinks||!1,C=k[v].blockRef||"",I=k[v].requireTag||"",B=k[v].onlyInNotesLinkingTo||!1,M=k[v].suggestMode||!1,K=k[v].preventSelfLink||!1,G=k[v].keywordIndex;if(!v.trim()||!S||!S.trim())continue;if(this.settings.preventSelfLinkGlobal||K){let $=e.basename,A=S.split("/").pop();if($===A)continue}if(B&&!vo(this.app,e,S)||!yo(this.app,S,I)||!mo(this.app,e,S,F,z,wo))continue;this.settings.autoCreateNotes&&await bo(this.app,this.settings,S);let Oe=this.settings.caseSensitive?"g":"gi",Pe=ae(v),b=new RegExp(`\\b${Pe}\\b`,Oe),x,y=[],q=!1;for(;(x=b.exec(l))!==null;){let $=x.index,A=x[0];if(d&&$>=d.start&&$<d.end||$>0&&l[$-1]==="#"||ho(l,$)||po(l,$)||uo(l,$)||go(l,$,A.length))continue;if(this.settings.firstOccurrenceOnly){let H=v.toLowerCase();if(L.has(H))break;let X=this.settings.caseSensitive?new RegExp(`\\[\\[([^\\]]+\\|)?${ae(v)}\\]\\]`):new RegExp(`\\[\\[([^\\]]+\\|)?${ae(v)}\\]\\]`,"i"),ne=this.settings.caseSensitive?new RegExp(`<span class="akl-suggested-link"[^>]*>${ae(v)}</span>`):new RegExp(`<span class="akl-suggested-link"[^>]*>${ae(v)}</span>`,"i");if(X.test(l)||ne.test(l))break;L.add(H)}let R=fo(l,$),We=C?`${S}#${C}`:S,j;if(M){let H=S.replace(/"/g,"&quot;"),X=C.replace(/"/g,"&quot;");j=`<span class="akl-suggested-link" data-target="${H}" data-block="${X}" data-use-relative="${V?"true":"false"}" data-keyword-index="${G}">${A}</span>`}else if(V){let H=R?A.replace(/\|/g,"\\|"):A,X=encodeURIComponent(S)+".md",ne=C?`#${C}`:"";j=`[${H}](${X}${ne})`}else R?j=S===A&&!C?`[[${A}]]`:`[[${We}\\|${A}]]`:j=S===A&&!C?`[[${A}]]`:`[[${We}|${A}]]`;if(y.push({index:$,length:A.length,original:A,replacement:j,lengthDiff:j.length-A.length}),f.push({keyword:A,target:S,context:lo(l,$)}),q=!0,this.settings.firstOccurrenceOnly)break}if(q&&E){let $=xo(v);p.add($),S!==e.basename&&g.set(S,$)}for(let $=y.length-1;$>=0;$--){let A=y[$];l=l.substring(0,A.index)+A.replacement+l.substring(A.index+A.length),h++}for(let $=0;$<y.length;$++)T.push({index:y[$].index,lengthDiff:y[$].lengthDiff})}T.sort((v,S)=>v.index-S.index),p.size>0&&!t&&!o&&(l=await So(l,Array.from(p)));let m=l!==c;if(!t&&m){if(n&&r){if(n.getValue()!==c)return null;let S=c.split(`
+`),E=0;for(let C=0;C<r.line&&C<S.length;C++)E+=S[C].length+1;E+=r.ch;let F=0;for(let C of T)C.index<E&&(F+=C.lengthDiff);let z=E+F,V=E>=u-10;if(n.setValue(l),p.size>0&&V){let C=l.split(`
+`),I=-1;for(let B=C.length-1;B>=0;B--){let M=C[B].trim();if(M!==""&&!M.match(/^#[\w\-]+(\s+#[\w\-]+)*$/)){I=B;break}}I>=0?n.setCursor({line:I,ch:C[I].length}):n.setCursor({line:0,ch:0})}else{let C=l.split(`
+`),I=z,B=0,M=0;for(let K=0;K<C.length;K++){if(I<=C[K].length){B=K,M=I;break}I-=C[K].length+1}n.setCursor({line:B,ch:M})}}else await this.app.vault.modify(e,l);if(!o)for(let[v,S]of g)await Co(this.app,v,S)}if(m){let v={changed:!0,linkCount:h,changes:f,preview:t?l:null};return o&&(p.size>0||g.size>0)&&(v.pendingTags={tagsToAdd:Array.from(p),targetNotesForTags:g}),v}return null}};Rt.exports=qe});var Pt=D((Qa,Ot)=>{function Lo(a){a.addCommand({id:"link-keywords-in-current-note",name:"Link keywords in current note",callback:()=>a.linkKeywordsInCurrentNote(!1)}),a.addCommand({id:"preview-keywords-in-current-note",name:"Preview keyword linking in current note",callback:()=>a.linkKeywordsInCurrentNote(!0)}),a.addCommand({id:"link-keywords-in-all-notes",name:"Link keywords in all notes",callback:()=>a.linkKeywordsInAllNotes(!1)}),a.addCommand({id:"preview-keywords-in-all-notes",name:"Preview keyword linking in all notes",callback:()=>a.linkKeywordsInAllNotes(!0)}),a.addCommand({id:"suggest-keywords",name:"Suggest keywords from notes",callback:()=>a.suggestKeywords()}),a.addCommand({id:"suggest-keywords-current-note",name:"Suggest keywords from current note only",callback:()=>a.suggestKeywordsFromCurrentNote()}),a.addCommand({id:"accept-suggestion-at-cursor",name:"Accept all suggestions on current line",editorCallback:e=>a.acceptSuggestionAtCursor(e),hotkeys:[{modifiers:["Mod"],key:"Enter"}]}),a.addCommand({id:"accept-all-suggestions",name:"Accept all link suggestions in current note",editorCallback:e=>a.acceptAllSuggestions(e)}),a.addCommand({id:"review-link-suggestions",name:"Review link suggestions",editorCallback:e=>a.reviewSuggestions(e)}),a.addCommand({id:"export-keywords",name:"Export keywords to JSON",callback:()=>a.exportKeywords()}),a.addCommand({id:"import-keywords",name:"Import keywords from JSON",callback:()=>a.importKeywords()}),a.addCommand({id:"download-csv-template",name:"Download CSV template",callback:()=>a.downloadCSVTemplate()}),a.addCommand({id:"export-keywords-csv",name:"Export keywords to CSV",callback:()=>a.exportKeywordsToCSV()}),a.addCommand({id:"import-keywords-csv",name:"Import keywords from CSV",callback:()=>a.importKeywordsFromCSV()}),a.addCommand({id:"view-statistics",name:"View statistics",callback:()=>a.showStatistics()})}Ot.exports={registerCommands:Lo}});var Gt=D((Ya,Wt)=>{var Q=Re();function To(a){Q.setupSuggestionContextMenu(a),a.registerMarkdownPostProcessor(e=>{Q.processSuggestedLinks(a,e)}),Q.setupLivePreviewClickHandler(a),a.registerEvent(a.app.workspace.on("editor-menu",(e,t)=>{let o=t.getValue();/<span class="akl-suggested-link"[^>]*>([^<]+)<\/span>/.test(o)&&(e.addItem(i=>{i.setTitle("\u{1F4CB} Review all link suggestions...").setIcon("list-checks").onClick(()=>{a.reviewSuggestions(t)})}),e.addItem(i=>{i.setTitle("\u2713 Accept all suggestions on this line").setIcon("check").onClick(()=>{a.acceptSuggestionAtCursor(t)})}),e.addSeparator())})),a.statusBarItem=a.addStatusBarItem(),Q.updateStatusBar(a),a.registerEvent(a.app.workspace.on("active-leaf-change",()=>{Q.updateStatusBar(a)})),a.registerEvent(a.app.workspace.on("editor-change",()=>{setTimeout(()=>Q.updateStatusBar(a),100)}))}Wt.exports={registerEvents:To}});var{Plugin:Eo}=require("obsidian"),{loadSettings:Ao,saveSettings:$o,setupSettingsWatcher:Io}=(He(),P(je)),{getEffectiveKeywordSettings:No,buildKeywordMap:Do,checkLinkScope:Fo}=pe(),{getAliasesForNote:zo,noteHasTag:Bo,noteHasLinkToTarget:Ko,ensureNoteExists:Vo,findTargetFile:jt}=re(),{getStopWords:Mo,extractWordsFromText:Ro,extractPhrasesFromText:qo,analyzeNotesForKeywords:Oo,analyzeCurrentNoteForKeywords:Po}=Qe(),{getFrontmatterBounds:Wo,isInsideAlias:Go,isPartOfUrl:jo,isInsideLinkOrCode:Ho,isInsideBlockReference:Uo,isInsideTable:Zo}=fe(),{sanitizeTagName:_o,addTagsToContent:Jo,addTagsToFile:Qo,addTagToTargetNote:Yo}=me(),{linkKeywordsInCurrentNote:Xo,linkKeywordsInAllNotes:ea}=st(),{suggestKeywords:ta,suggestKeywordsFromCurrentNote:sa,reviewSuggestions:oa,acceptSuggestionAtCursor:aa,acceptAllSuggestions:na}=at(),{exportKeywords:ra,importKeywords:ia,downloadCSVTemplate:la,exportKeywordsToCSV:ca,importKeywordsFromCSV:da}=rt(),{showStatistics:ua}=lt(),ga=dt(),Ht=gt(),pa=ht(),ha=mt(),fa=yt(),ka=xt(),ma=Ct(),wa=$e(),Xa=Ae(),en=Ne(),tn=Fe(),Y=Re(),{addCustomStyles:Ut}=Kt(),{setupAutoLinkOnSave:Zt}=Mt(),ya=qt(),{registerCommands:va}=Pt(),{registerEvents:ba}=Gt();module.exports=class extends Eo{async onload(){this.settings=await Ao(this),Io(this),this.keywordLinker=new ya(this.app,this.settings),va(this),this.addSettingTab(new wa(this.app,this)),Ut(),ba(this),this.settings.autoLinkOnSave&&Zt(this)}processSuggestedLinks(e){return Y.processSuggestedLinks(this,e)}updateStatusBar(){return Y.updateStatusBar(this)}setupSuggestionContextMenu(){return Y.setupSuggestionContextMenu(this)}setupLivePreviewClickHandler(){return Y.setupLivePreviewClickHandler(this)}showSuggestionMenuAtLine(e,t,o,s){return Y.showSuggestionMenuAtLine(this,e,t,o,s)}acceptSuggestionInLine(e,t,o,s,i,n,r){return Y.acceptSuggestionInLine(this,e,t,o,s,i,n,r)}reviewSuggestions(e){return oa(this.app,e,ka)}acceptSuggestionAtCursor(e){return aa(e,this.isInsideTable.bind(this),this.updateStatusBar.bind(this))}acceptAllSuggestions(e){return na(e,this.isInsideTable.bind(this),this.updateStatusBar.bind(this))}showStatistics(){return ua(this.app,this.settings,ga)}async exportKeywords(){return await ra(this.app,this.settings)}async importKeywords(){return await ia(this.app,this,pa)}async downloadCSVTemplate(){return await la(this.app)}async exportKeywordsToCSV(){return await ca(this.app,this.settings)}async importKeywordsFromCSV(){return await da(this.app,this,ha)}async suggestKeywords(){return await ta(this.app,this,Ht)}async suggestKeywordsFromCurrentNote(){return await sa(this.app,this,Ht)}getStopWords(){return Mo(this.settings)}extractWordsFromText(e,t=!1){return Ro(e,t,this.settings)}extractPhrasesFromText(e){return qo(e,this.settings)}async analyzeNotesForKeywords(){return await Oo(this.app,this.settings,this.getAliasesForNote.bind(this))}async analyzeCurrentNoteForKeywords(e){return await Po(this.app,this.settings,e,this.getAliasesForNote.bind(this))}setupAutoLinkOnSave(){return Zt(this)}async linkKeywordsInCurrentNote(e=!1){return await Xo(this.app,this.settings,this.linkKeywordsInFile.bind(this),this.saveSettings.bind(this),this.updateStatusBar.bind(this),fa,e)}async linkKeywordsInAllNotes(e=!1){return await ea(this.app,this.settings,this.linkKeywordsInFile.bind(this),this.saveSettings.bind(this),this,ma,e)}async linkKeywordsInFile(e,t=!1,o=!1){return this.keywordLinker.settings=this.settings,await this.keywordLinker.linkKeywordsInFile(e,t,o)}async addTagsToFile(e,t,o){return await Qo(this.app,e,t,o)}sanitizeTagName(e){return _o(e)}async addTagsToContent(e,t){return await Jo(e,t)}async addTagToTargetNote(e,t){return await Yo(this.app,e,t)}getFrontmatterBounds(e){return Wo(e)}isInsideAlias(e,t){return Go(e,t)}isPartOfUrl(e,t,o){return jo(e,t,o)}isInsideLinkOrCode(e,t){return Ho(e,t)}isInsideBlockReference(e,t){return Uo(e,t)}isInsideTable(e,t){return Zo(e,t)}getEffectiveKeywordSettings(e){return No(this.settings,e)}buildKeywordMap(){return Do(this.app,this.settings)}checkLinkScope(e,t,o,s){return Fo(this.app,e,t,o,s,jt)}findTargetFile(e){return jt(this.app,e)}getAliasesForNote(e){return zo(this.app,e)}noteHasTag(e,t){return Bo(this.app,e,t)}noteHasLinkToTarget(e,t){return Ko(this.app,e,t)}async ensureNoteExists(e){return await Vo(this.app,this.settings,e)}async saveSettings(){await $o(this,this.settings)}addCustomStyles(){return Ut()}};
