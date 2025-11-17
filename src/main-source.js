@@ -10,7 +10,7 @@ const { getAliasesForNote, noteHasTag, noteHasLinkToTarget, ensureNoteExists, fi
 
 // Import refactored modules (Session 3)
 const { getStopWords, extractWordsFromText, extractPhrasesFromText, analyzeNotesForKeywords, analyzeCurrentNoteForKeywords } = require('./utils/analysis');
-const { getFrontmatterBounds, isInsideAlias, isPartOfUrl, isInsideLinkOrCode, isInsideBlockReference, isInsideTable } = require('./utils/detection');
+const { getFrontmatterBounds, isInsideAlias, isPartOfUrl, isInsideLinkOrCode, isInsideBlockReference, isInsideTable, isInsideMath } = require('./utils/detection');
 const { sanitizeTagName, addTagsToContent, addTagsToFile, addTagToTargetNote } = require('./utils/tagManagement');
 
 // Import refactored modules (Session 4)
@@ -399,6 +399,16 @@ module.exports = class AutoKeywordLinker extends Plugin {
      */
     isInsideTable(content, index) {
         return isInsideTable(content, index);
+    }
+
+    /**
+     * Check if a position is inside a LaTeX math formula
+     * @param {string} content - The full content
+     * @param {number} index - Position to check
+     * @returns {boolean} True if inside math formula
+     */
+    isInsideMath(content, index) {
+        return isInsideMath(content, index);
     }
 
     /**

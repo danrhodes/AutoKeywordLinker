@@ -319,6 +319,63 @@ function isInsideBlockReference(content, index) {
 }
 
 /**
+ * Check if a position is inside a LaTeX math formula
+ * Supports both inline math ($...$) and block math ($$...$$)
+ * @param {string} content - The full content
+ * @param {number} index - Position to check
+ * @returns {boolean} True if inside a math formula
+ */
+function isInsideMath(content, index) {
+    // Check for block math ($$...$$) first as it takes precedence
+    // Count $$ before the position
+    let blockMathCount = 0;
+    let i = 0;
+
+    while (i < index) {
+        if (i < content.length - 1 && content[i] === '$' && content[i + 1] === '$') {
+            blockMathCount++;
+            i += 2; // Skip both $$
+        } else {
+            i++;
+        }
+    }
+
+    // If odd number of $$ before position, we're inside block math
+    if (blockMathCount % 2 === 1) {
+        return true;
+    }
+
+    // Check for inline math ($...$)
+    // We need to count single $ that are NOT part of $$
+    let singleDollarCount = 0;
+    i = 0;
+
+    while (i < index) {
+        if (content[i] === '$') {
+            // Check if it's a double $$
+            if (i < content.length - 1 && content[i + 1] === '$') {
+                i += 2; // Skip $$, don't count for inline math
+            } else if (i > 0 && content[i - 1] === '$') {
+                i++; // Already counted as part of $$
+            } else {
+                // It's a single $
+                singleDollarCount++;
+                i++;
+            }
+        } else {
+            i++;
+        }
+    }
+
+    // If odd number of single $ before position, we're inside inline math
+    if (singleDollarCount % 2 === 1) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
  * Check if a position is inside a Markdown table
  * Tables are defined by lines containing pipes (|) with a header separator line
  * @param {string} content - The full content
@@ -411,5 +468,6 @@ module.exports = {
     isPartOfUrl,
     isInsideLinkOrCode,
     isInsideBlockReference,
-    isInsideTable
+    isInsideTable,
+    isInsideMath
 };

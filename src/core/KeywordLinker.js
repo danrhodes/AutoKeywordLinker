@@ -1,6 +1,6 @@
 const { MarkdownView } = require('obsidian');
 const { escapeRegex, getContext } = require('../utils/helpers');
-const { getFrontmatterBounds, isInsideAlias, isPartOfUrl, isInsideLinkOrCode, isInsideBlockReference, isInsideTable } = require('../utils/detection');
+const { getFrontmatterBounds, isInsideAlias, isPartOfUrl, isInsideLinkOrCode, isInsideBlockReference, isInsideTable, isInsideMath } = require('../utils/detection');
 const { getEffectiveKeywordSettings, buildKeywordMap, checkLinkScope } = require('../utils/linking');
 const { findTargetFile, getAliasesForNote, noteHasTag, noteHasLinkToTarget, ensureNoteExists } = require('../utils/noteManagement');
 const { sanitizeTagName, addTagsToContent, addTagToTargetNote } = require('../utils/tagManagement');
@@ -143,6 +143,11 @@ class KeywordLinker {
 
                 // Check if this match is part of a URL
                 if (isPartOfUrl(content, matchIndex, matchText.length)) {
+                    continue;
+                }
+
+                // CRITICAL FIX: Skip if inside a LaTeX math formula (inline or block)
+                if (isInsideMath(content, matchIndex)) {
                     continue;
                 }
 
