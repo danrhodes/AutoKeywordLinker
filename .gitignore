@@ -4,6 +4,7 @@ package-lock.json
 
 # Build artifacts
 main.js.map
+main.js
 
 # Backups
 main.js.original
