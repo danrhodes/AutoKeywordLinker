@@ -108,89 +108,80 @@ async function saveSettings(plugin, settings) {
 
 /**
  * Set up settings watcher to detect external changes (e.g., from sync)
- * Uses polling since vault events don't fire for .obsidian files
+ * Uses Obsidian's onExternalSettingsChange API if available (Obsidian 1.6.0+)
  * @param {Plugin} plugin - The plugin instance
  */
 function setupSettingsWatcher(plugin) {
     // Track if we're currently saving to prevent reload loops
     plugin.isSaving = false;
 
-    // Use polling to check for settings changes since vault events don't fire for .obsidian files
-    // Store the last known state of the settings
-    let lastSettingsHash = JSON.stringify(plugin.settings.keywords);
-
-    // Check for changes every 15 seconds
-    plugin.registerInterval(
-        window.setInterval(async () => {
+    // Check if onExternalSettingsChange API is available (Obsidian 1.6.0+)
+    if (typeof plugin.onExternalSettingsChange === 'function') {
+        // Use Obsidian's API to detect external settings changes
+        plugin.onExternalSettingsChange(async () => {
             if (plugin.isSaving) {
-                // Skip check if we're currently saving
+                // Skip reload if we're currently saving
                 return;
             }
 
             try {
+                console.log('Auto Keyword Linker: Settings changed externally, reloading...');
+
                 // Load the current data from disk
                 const diskData = await plugin.loadData();
 
-                if (diskData && diskData.keywords) {
-                    const currentHash = JSON.stringify(diskData.keywords);
+                // Update our settings
+                plugin.settings = Object.assign({}, DEFAULT_SETTINGS, diskData);
 
-                    // Compare with our last known state
-                    if (currentHash !== lastSettingsHash) {
-                        console.log('Auto Keyword Linker: Settings changed externally, reloading...');
+                // Ensure statistics object exists
+                if (!plugin.settings.statistics) {
+                    plugin.settings.statistics = DEFAULT_SETTINGS.statistics;
+                }
 
-                        // Update our settings
-                        plugin.settings = Object.assign({}, DEFAULT_SETTINGS, diskData);
+                // Ensure customStopWords exists and is an array
+                if (!plugin.settings.customStopWords || !Array.isArray(plugin.settings.customStopWords)) {
+                    plugin.settings.customStopWords = DEFAULT_SETTINGS.customStopWords;
+                }
 
-                        // Ensure statistics object exists
-                        if (!plugin.settings.statistics) {
-                            plugin.settings.statistics = DEFAULT_SETTINGS.statistics;
+                // Ensure enableTags, linkScope, useRelativeLinks, and blockRef fields exist for all keywords
+                if (plugin.settings.keywords) {
+                    for (let keyword of plugin.settings.keywords) {
+                        if (keyword.enableTags === undefined) {
+                            keyword.enableTags = false;
                         }
-
-                        // Ensure customStopWords exists and is an array
-                        if (!plugin.settings.customStopWords || !Array.isArray(plugin.settings.customStopWords)) {
-                            plugin.settings.customStopWords = DEFAULT_SETTINGS.customStopWords;
+                        if (keyword.linkScope === undefined) {
+                            keyword.linkScope = 'vault-wide';
                         }
-
-                        // Ensure enableTags, linkScope, useRelativeLinks, and blockRef fields exist for all keywords
-                        if (plugin.settings.keywords) {
-                            for (let keyword of plugin.settings.keywords) {
-                                if (keyword.enableTags === undefined) {
-                                    keyword.enableTags = false;
-                                }
-                                if (keyword.linkScope === undefined) {
-                                    keyword.linkScope = 'vault-wide';
-                                }
-                                if (keyword.scopeFolder === undefined) {
-                                    keyword.scopeFolder = '';
-                                }
-                                if (keyword.useRelativeLinks === undefined) {
-                                    keyword.useRelativeLinks = false;
-                                }
-                                if (keyword.blockRef === undefined) {
-                                    keyword.blockRef = '';
-                                }
-                                if (keyword.requireTag === undefined) {
-                                    keyword.requireTag = '';
-                                }
-                                if (keyword.onlyInNotesLinkingTo === undefined) {
-                                    keyword.onlyInNotesLinkingTo = false;
-                                }
-                            }
+                        if (keyword.scopeFolder === undefined) {
+                            keyword.scopeFolder = '';
                         }
-
-                        // Update our hash
-                        lastSettingsHash = currentHash;
-
-                        // Settings synced silently in background
-                        // UI will update next time settings are opened
+                        if (keyword.useRelativeLinks === undefined) {
+                            keyword.useRelativeLinks = false;
+                        }
+                        if (keyword.blockRef === undefined) {
+                            keyword.blockRef = '';
+                        }
+                        if (keyword.requireTag === undefined) {
+                            keyword.requireTag = '';
+                        }
+                        if (keyword.onlyInNotesLinkingTo === undefined) {
+                            keyword.onlyInNotesLinkingTo = false;
+                        }
                     }
                 }
+
+                // Settings synced silently in background
+                // UI will update next time settings are opened
             } catch (error) {
                 // Ignore errors - file might be temporarily unavailable during sync
                 console.log('Auto Keyword Linker: Error checking for settings changes:', error);
             }
-        }, 15000) // Check every 15 seconds
-    );
+        });
+    } else {
+        // Fallback: API not available in this Obsidian version
+        // Settings sync will not work automatically - user must reload plugin manually
+        console.log('Auto Keyword Linker: onExternalSettingsChange API not available (requires Obsidian 1.6.0+)');
+    }
 }
 
 module.exports = {

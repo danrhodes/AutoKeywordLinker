@@ -77,11 +77,10 @@ async function addTagToTargetNote(app, noteName, tagName) {
         return; // Tag already exists
     }
 
-    // Add the tag to the end
-    content = await addTagsToContent(content, [tagName]);
-
-    // Save the file
-    await app.vault.modify(targetFile, content);
+    // Add the tag to the end using vault.process
+    await app.vault.process(targetFile, async (content) => {
+        return await addTagsToContent(content, [tagName]);
+    });
 }
 
 /**
@@ -150,10 +149,10 @@ async function addTagsToFile(app, file, tagsToAdd, targetNotesForTags) {
                 editor.replaceRange(`\n\n${tagString}`, { line: lastLine, ch: lastLineLength });
             }
         } else {
-            // File not open, use vault.modify
-            let content = await app.vault.read(file);
-            content = await addTagsToContent(content, tagsToAdd);
-            await app.vault.modify(file, content);
+            // File not open, use vault.process
+            await app.vault.process(file, (content) => {
+                return addTagsToContent(content, tagsToAdd);
+            });
         }
     }
 

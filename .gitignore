@@ -6,14 +6,10 @@ package-lock.json
 main.js.map
 main.js
 
-# Backups
-main.js.original
-main.js.backup
-Pre-Refactoring/
-
 # OS
 .DS_Store
 Thumbs.db
 .cmd
 .claude
 .original
+main.js.original

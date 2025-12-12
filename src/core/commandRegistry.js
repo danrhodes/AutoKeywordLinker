@@ -17,14 +17,20 @@ function registerCommands(plugin) {
     plugin.addCommand({
         id: 'link-keywords-in-current-note',
         name: 'Link keywords in current note',
-        callback: () => plugin.linkKeywordsInCurrentNote(false)  // false = not preview mode
+        editorCheckCallback: (checking, editor, view) => {
+            if (checking) return true;
+            plugin.linkKeywordsInCurrentNote(false);  // false = not preview mode
+        }
     });
 
     // Register command: Preview keyword linking in the currently active note
     plugin.addCommand({
         id: 'preview-keywords-in-current-note',
         name: 'Preview keyword linking in current note',
-        callback: () => plugin.linkKeywordsInCurrentNote(true)   // true = preview mode
+        editorCheckCallback: (checking, editor, view) => {
+            if (checking) return true;
+            plugin.linkKeywordsInCurrentNote(true);   // true = preview mode
+        }
     });
 
     // Register command: Link keywords in all notes in the vault
@@ -56,20 +62,17 @@ function registerCommands(plugin) {
     plugin.addCommand({
         id: 'suggest-keywords-current-note',
         name: 'Suggest keywords from current note only',
-        callback: () => plugin.suggestKeywordsFromCurrentNote()
+        editorCheckCallback: (checking, editor, view) => {
+            if (checking) return true;
+            plugin.suggestKeywordsFromCurrentNote();
+        }
     });
 
     // Register command: Accept all suggestions on current line
     plugin.addCommand({
         id: 'accept-suggestion-at-cursor',
         name: 'Accept all suggestions on current line',
-        editorCallback: (editor) => plugin.acceptSuggestionAtCursor(editor),
-        hotkeys: [
-            {
-                modifiers: ["Mod"],
-                key: "Enter"
-            }
-        ]
+        editorCallback: (editor) => plugin.acceptSuggestionAtCursor(editor)
     });
 
     // Register command: Accept all link suggestions in current note

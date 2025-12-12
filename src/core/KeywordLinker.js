@@ -359,8 +359,8 @@ class KeywordLinker {
                     editor.setCursor({ line: newLine, ch: newCh });
                 }
             } else {
-                // File not open in editor, use vault.modify
-                await this.app.vault.modify(file, content);
+                // File not open in editor, use vault.process
+                await this.app.vault.process(file, () => content);
             }
 
             // Add tags to target notes as well (unless skipTags is true)
