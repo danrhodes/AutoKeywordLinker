@@ -42,10 +42,6 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         // Add custom CSS for improved UI
         this.addCustomStyles();
 
-        // Main heading
-        const headerDiv = containerEl.createDiv({cls: 'akl-header'});
-        headerDiv.createEl('h2', {text: 'Auto keyword linker'});
-
         // Tab navigation
         const tabNav = containerEl.createDiv({cls: 'akl-tab-nav'});
 

@@ -24,7 +24,7 @@ function sanitizeTagName(keyword) {
  * @param {Array} tags - Array of tag names (without #)
  * @returns {string} Content with tags added
  */
-async function addTagsToContent(content, tags) {
+function addTagsToContent(content, tags) {
     // Check which tags already exist at the end of the document
     const existingTagsMatch = content.match(/\n\n((?:#[\w\-]+\s*)+)$/);
     const existingTags = existingTagsMatch ?
@@ -78,8 +78,8 @@ async function addTagToTargetNote(app, noteName, tagName) {
     }
 
     // Add the tag to the end using vault.process
-    await app.vault.process(targetFile, async (content) => {
-        return await addTagsToContent(content, [tagName]);
+    await app.vault.process(targetFile, (content) => {
+        return addTagsToContent(content, [tagName]);
     });
 }
 

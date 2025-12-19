@@ -46,7 +46,17 @@ const { registerEvents } = require('./core/eventRegistry');
 
 // Main plugin class - this is the entry point for the plugin
 module.exports = class AutoKeywordLinker extends Plugin {
-    
+
+    /**
+     * Called when settings change externally (e.g., from sync)
+     * This is a lifecycle method provided by the Plugin base class
+     */
+    async onExternalSettingsChange() {
+        if (this._handleExternalSettingsChange) {
+            await this._handleExternalSettingsChange();
+        }
+    }
+
     /**
      * Called when the plugin is loaded
      * Sets up commands, settings, and event listeners
@@ -324,8 +334,8 @@ module.exports = class AutoKeywordLinker extends Plugin {
      * @param {Array} tags - Array of tag names (without #)
      * @returns {string} Content with tags added
      */
-    async addTagsToContent(content, tags) {
-        return await addTagsToContent(content, tags);
+    addTagsToContent(content, tags) {
+        return addTagsToContent(content, tags);
     }
 
     /**

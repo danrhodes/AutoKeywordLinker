@@ -18,7 +18,7 @@ function registerCommands(plugin) {
         id: 'link-keywords-in-current-note',
         name: 'Link keywords in current note',
         editorCheckCallback: (checking, editor, view) => {
-            if (checking) return true;
+            if (checking) return view.file !== null;
             plugin.linkKeywordsInCurrentNote(false);  // false = not preview mode
         }
     });
@@ -28,7 +28,7 @@ function registerCommands(plugin) {
         id: 'preview-keywords-in-current-note',
         name: 'Preview keyword linking in current note',
         editorCheckCallback: (checking, editor, view) => {
-            if (checking) return true;
+            if (checking) return view.file !== null;
             plugin.linkKeywordsInCurrentNote(true);   // true = preview mode
         }
     });
@@ -63,7 +63,7 @@ function registerCommands(plugin) {
         id: 'suggest-keywords-current-note',
         name: 'Suggest keywords from current note only',
         editorCheckCallback: (checking, editor, view) => {
-            if (checking) return true;
+            if (checking) return view.file !== null;
             plugin.suggestKeywordsFromCurrentNote();
         }
     });

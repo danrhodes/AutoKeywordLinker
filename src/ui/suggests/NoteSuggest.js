@@ -8,6 +8,7 @@ const { AbstractInputSuggest } = require('obsidian');
 class NoteSuggest extends AbstractInputSuggest {
     constructor(app, inputEl, notes) {
         super(app, inputEl);
+        this.inputEl = inputEl;
         this.notes = notes;
     }
 
@@ -37,8 +38,10 @@ class NoteSuggest extends AbstractInputSuggest {
     }
 
     selectSuggestion(note, evt) {
-        this.inputEl.value = note;
-        this.inputEl.trigger('input');
+        if (this.inputEl) {
+            this.inputEl.value = note;
+            this.inputEl.trigger('input');
+        }
         this.close();
     }
 }

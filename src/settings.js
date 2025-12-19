@@ -108,80 +108,71 @@ async function saveSettings(plugin, settings) {
 
 /**
  * Set up settings watcher to detect external changes (e.g., from sync)
- * Uses Obsidian's onExternalSettingsChange API if available (Obsidian 1.6.0+)
+ * Note: This function should be called within the plugin's onload() method
+ * to properly set up the onExternalSettingsChange hook
  * @param {Plugin} plugin - The plugin instance
  */
 function setupSettingsWatcher(plugin) {
     // Track if we're currently saving to prevent reload loops
     plugin.isSaving = false;
 
-    // Check if onExternalSettingsChange API is available (Obsidian 1.6.0+)
-    if (typeof plugin.onExternalSettingsChange === 'function') {
-        // Use Obsidian's API to detect external settings changes
-        plugin.onExternalSettingsChange(async () => {
-            if (plugin.isSaving) {
-                // Skip reload if we're currently saving
-                return;
+    // Define the handler that will be called when settings change externally
+    plugin._handleExternalSettingsChange = async () => {
+        if (plugin.isSaving) {
+            // Skip reload if we're currently saving
+            return;
+        }
+
+        try {
+            // Load the current data from disk
+            const diskData = await plugin.loadData();
+
+            // Update our settings
+            plugin.settings = Object.assign({}, DEFAULT_SETTINGS, diskData);
+
+            // Ensure statistics object exists
+            if (!plugin.settings.statistics) {
+                plugin.settings.statistics = DEFAULT_SETTINGS.statistics;
             }
 
-            try {
-                console.log('Auto Keyword Linker: Settings changed externally, reloading...');
+            // Ensure customStopWords exists and is an array
+            if (!plugin.settings.customStopWords || !Array.isArray(plugin.settings.customStopWords)) {
+                plugin.settings.customStopWords = DEFAULT_SETTINGS.customStopWords;
+            }
 
-                // Load the current data from disk
-                const diskData = await plugin.loadData();
-
-                // Update our settings
-                plugin.settings = Object.assign({}, DEFAULT_SETTINGS, diskData);
-
-                // Ensure statistics object exists
-                if (!plugin.settings.statistics) {
-                    plugin.settings.statistics = DEFAULT_SETTINGS.statistics;
-                }
-
-                // Ensure customStopWords exists and is an array
-                if (!plugin.settings.customStopWords || !Array.isArray(plugin.settings.customStopWords)) {
-                    plugin.settings.customStopWords = DEFAULT_SETTINGS.customStopWords;
-                }
-
-                // Ensure enableTags, linkScope, useRelativeLinks, and blockRef fields exist for all keywords
-                if (plugin.settings.keywords) {
-                    for (let keyword of plugin.settings.keywords) {
-                        if (keyword.enableTags === undefined) {
-                            keyword.enableTags = false;
-                        }
-                        if (keyword.linkScope === undefined) {
-                            keyword.linkScope = 'vault-wide';
-                        }
-                        if (keyword.scopeFolder === undefined) {
-                            keyword.scopeFolder = '';
-                        }
-                        if (keyword.useRelativeLinks === undefined) {
-                            keyword.useRelativeLinks = false;
-                        }
-                        if (keyword.blockRef === undefined) {
-                            keyword.blockRef = '';
-                        }
-                        if (keyword.requireTag === undefined) {
-                            keyword.requireTag = '';
-                        }
-                        if (keyword.onlyInNotesLinkingTo === undefined) {
-                            keyword.onlyInNotesLinkingTo = false;
-                        }
+            // Ensure enableTags, linkScope, useRelativeLinks, and blockRef fields exist for all keywords
+            if (plugin.settings.keywords) {
+                for (let keyword of plugin.settings.keywords) {
+                    if (keyword.enableTags === undefined) {
+                        keyword.enableTags = false;
+                    }
+                    if (keyword.linkScope === undefined) {
+                        keyword.linkScope = 'vault-wide';
+                    }
+                    if (keyword.scopeFolder === undefined) {
+                        keyword.scopeFolder = '';
+                    }
+                    if (keyword.useRelativeLinks === undefined) {
+                        keyword.useRelativeLinks = false;
+                    }
+                    if (keyword.blockRef === undefined) {
+                        keyword.blockRef = '';
+                    }
+                    if (keyword.requireTag === undefined) {
+                        keyword.requireTag = '';
+                    }
+                    if (keyword.onlyInNotesLinkingTo === undefined) {
+                        keyword.onlyInNotesLinkingTo = false;
                     }
                 }
-
-                // Settings synced silently in background
-                // UI will update next time settings are opened
-            } catch (error) {
-                // Ignore errors - file might be temporarily unavailable during sync
-                console.log('Auto Keyword Linker: Error checking for settings changes:', error);
             }
-        });
-    } else {
-        // Fallback: API not available in this Obsidian version
-        // Settings sync will not work automatically - user must reload plugin manually
-        console.log('Auto Keyword Linker: onExternalSettingsChange API not available (requires Obsidian 1.6.0+)');
-    }
+
+            // Settings synced silently in background
+            // UI will update next time settings are opened
+        } catch (error) {
+            // Ignore errors - file might be temporarily unavailable during sync
+        }
+    };
 }
 
 module.exports = {

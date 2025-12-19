@@ -8,6 +8,7 @@ const { AbstractInputSuggest } = require('obsidian');
 class FolderSuggest extends AbstractInputSuggest {
     constructor(app, inputEl, folders) {
         super(app, inputEl);
+        this.inputEl = inputEl;
         this.folders = folders;
     }
 
@@ -38,8 +39,10 @@ class FolderSuggest extends AbstractInputSuggest {
     }
 
     selectSuggestion(folder, evt) {
-        this.inputEl.value = folder || '/ (Root)';
-        this.inputEl.trigger('input');
+        if (this.inputEl) {
+            this.inputEl.value = folder || '';
+            this.inputEl.trigger('input');
+        }
         this.close();
     }
 }
