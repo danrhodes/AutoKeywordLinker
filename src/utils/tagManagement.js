@@ -68,17 +68,15 @@ async function addTagToTargetNote(app, noteName, tagName) {
         return; // Note doesn't exist
     }
 
-    // Read the file
-    let content = await app.vault.read(targetFile);
-
-    // Check if tag already exists anywhere in the file
-    const tagRegex = new RegExp(`#${tagName}\\b`);
-    if (tagRegex.test(content)) {
-        return; // Tag already exists
-    }
-
-    // Add the tag to the end using vault.process
+    // Use vault.process to atomically check and add the tag
     await app.vault.process(targetFile, (content) => {
+        // Check if tag already exists anywhere in the file
+        const tagRegex = new RegExp(`#${tagName}\\b`);
+        if (tagRegex.test(content)) {
+            return content; // Tag already exists, return unchanged
+        }
+
+        // Add the tag to the end
         return addTagsToContent(content, [tagName]);
     });
 }

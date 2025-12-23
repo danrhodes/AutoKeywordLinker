@@ -11,26 +11,18 @@ class KeywordLinker {
         this.settings = settings;
     }
 
-    async linkKeywordsInFile(file, preview = false, skipTags = false) {
-        // SAFETY CHECK: Ensure we only process markdown files
-        if (file.extension !== 'md') {
-            return null;
-        }
-
-        // Check if this file is currently open in an editor
-        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-        const isActiveFile = activeView && activeView.file.path === file.path;
-        const editor = isActiveFile ? activeView.editor : null;
-
-        // Save cursor position if file is active
-        let savedCursor = null;
-        if (editor && !preview) {
-            savedCursor = editor.getCursor();
-        }
-
-        // Read the file content
-        let content = await this.app.vault.read(file);
-        const originalContent = content;  // Store original for comparison
+    /**
+     * Process content and apply keyword linking transformations
+     * This is the core processing logic, extracted so it can be used with both
+     * editor.getValue()/setValue() and vault.process() patterns
+     * @param {string} content - The content to process
+     * @param {TFile} file - The file being processed (for context checks)
+     * @param {boolean} preview - If true, don't track for actual changes
+     * @param {boolean} skipTags - If true, don't add tags, just return pending tags
+     * @returns {Object} Processing result with newContent, linkCount, changes, etc.
+     */
+    processContent(content, file, preview = false, skipTags = false) {
+        const originalContent = content;
         const originalLength = content.length;
 
         // CRITICAL: Get frontmatter boundaries to skip that section
@@ -39,8 +31,8 @@ class KeywordLinker {
         // Initialize tracking variables
         let linkCount = 0;
         let changes = [];
-        let tagsToAdd = new Set(); // Track tags to add to this file
-        let targetNotesForTags = new Map(); // Map of target note -> tag name
+        let tagsToAdd = new Set();
+        let targetNotesForTags = new Map();
 
         // Build a map of all keywords to their target notes
         const keywordMap = buildKeywordMap(this.app, this.settings);
@@ -74,12 +66,10 @@ class KeywordLinker {
             // Check self-link protection - skip if we're on the target note itself
             // Use global setting OR per-keyword setting
             if (this.settings.preventSelfLinkGlobal || preventSelfLink) {
-                // Get file basename without extension and normalize
                 const currentFileBase = file.basename;
-                // Compare with target (which may or may not have path)
-                const targetBase = target.split('/').pop(); // Get just the filename from path
+                const targetBase = target.split('/').pop();
                 if (currentFileBase === targetBase) {
-                    continue; // Skip this keyword on its own target note
+                    continue;
                 }
             }
 
@@ -88,19 +78,14 @@ class KeywordLinker {
                 continue;
             }
 
-            // Check if target note has required tag - skip this keyword if tag requirement not met
+            // Check if target note has required tag
             if (!noteHasTag(this.app, target, requireTag)) {
                 continue;
             }
 
-            // Check link scope - skip this keyword if scope conditions aren't met
+            // Check link scope
             if (!checkLinkScope(this.app, file, target, linkScope, scopeFolder, findTargetFile)) {
                 continue;
-            }
-
-            // If auto-create is enabled, ensure the target note exists
-            if (this.settings.autoCreateNotes) {
-                await ensureNoteExists(this.app, this.settings, target);
             }
 
             const flags = this.settings.caseSensitive ? 'g' : 'gi';
@@ -121,49 +106,44 @@ class KeywordLinker {
                     continue;
                 }
 
-                // CRITICAL FIX: Skip if preceded by # (hashtag)
+                // Skip if preceded by # (hashtag)
                 if (matchIndex > 0 && content[matchIndex - 1] === '#') {
                     continue;
                 }
 
-                // CRITICAL FIX: Skip if inside a block reference (^block-id)
+                // Skip if inside a block reference
                 if (isInsideBlockReference(content, matchIndex)) {
                     continue;
                 }
 
-                // Check if this match is inside a link or code block
+                // Check if inside a link or code block
                 if (isInsideLinkOrCode(content, matchIndex)) {
                     continue;
                 }
 
-                // Check if this match is inside an alias portion of a link
+                // Check if inside an alias portion of a link
                 if (isInsideAlias(content, matchIndex)) {
                     continue;
                 }
 
-                // Check if this match is part of a URL
+                // Check if part of a URL
                 if (isPartOfUrl(content, matchIndex, matchText.length)) {
                     continue;
                 }
 
-                // CRITICAL FIX: Skip if inside a LaTeX math formula (inline or block)
+                // Skip if inside a LaTeX math formula
                 if (isInsideMath(content, matchIndex)) {
                     continue;
                 }
-
-                // Note: We DO allow linking inside tables - Obsidian supports wikilinks in tables
 
                 // For firstOccurrenceOnly, skip if we already found this keyword
                 if (this.settings.firstOccurrenceOnly) {
                     const keyLower = keyword.toLowerCase();
 
-                    // Check if we already found this keyword in THIS execution
                     if (foundKeywords.has(keyLower)) {
-                        break;  // Stop looking for this keyword
+                        break;
                     }
 
-                    // Also check if the keyword is already linked or suggested in the document content
-                    // This handles cases where the keyword was linked/suggested in a previous execution
                     const existingLinkPattern = this.settings.caseSensitive
                         ? new RegExp(`\\[\\[([^\\]]+\\|)?${escapeRegex(keyword)}\\]\\]`)
                         : new RegExp(`\\[\\[([^\\]]+\\|)?${escapeRegex(keyword)}\\]\\]`, 'i');
@@ -173,7 +153,7 @@ class KeywordLinker {
                         : new RegExp(`<span class="akl-suggested-link"[^>]*>${escapeRegex(keyword)}</span>`, 'i');
 
                     if (existingLinkPattern.test(content) || existingSuggestPattern.test(content)) {
-                        break;  // Already linked or suggested in document, skip this keyword entirely
+                        break;
                     }
 
                     foundKeywords.add(keyLower);
@@ -188,25 +168,19 @@ class KeywordLinker {
                 // Create replacement link or suggestion
                 let replacement;
                 if (suggestMode) {
-                    // Suggest mode: create HTML span instead of actual link
                     const escapedTarget = target.replace(/"/g, '&quot;');
                     const escapedBlock = blockRef.replace(/"/g, '&quot;');
                     const useRelative = useRelativeLinks ? 'true' : 'false';
                     replacement = `<span class="akl-suggested-link" data-target="${escapedTarget}" data-block="${escapedBlock}" data-use-relative="${useRelative}" data-keyword-index="${keywordIndex}">${matchText}</span>`;
                 } else if (useRelativeLinks) {
-                    // Use relative markdown link format: [text](Target%20Note.md#^block-id)
-                    // Escape pipe characters in the display text if inside a table to prevent breaking table columns
                     const escapedMatchText = insideTable ? matchText.replace(/\|/g, '\\|') : matchText;
                     const encodedTarget = encodeURIComponent(target) + '.md';
                     const blockPart = blockRef ? `#${blockRef}` : '';
                     replacement = `[${escapedMatchText}](${encodedTarget}${blockPart})`;
                 } else {
-                    // Use wikilink format: [[target#^block-id|matchText]]
                     if (insideTable) {
-                        // Inside tables: Escape the pipe with single backslash \| to prevent breaking table formatting
                         replacement = target === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}\\|${matchText}]]`;
                     } else {
-                        // Outside table: standard wikilink format with | separator for alias
                         replacement = target === matchText && !blockRef ? `[[${matchText}]]` : `[[${targetWithBlock}|${matchText}]]`;
                     }
                 }
@@ -230,7 +204,7 @@ class KeywordLinker {
                 keywordFoundInThisFile = true;
 
                 if (this.settings.firstOccurrenceOnly) {
-                    break;  // Only find first occurrence
+                    break;
                 }
             }
 
@@ -239,7 +213,6 @@ class KeywordLinker {
                 const tagName = sanitizeTagName(keyword);
                 tagsToAdd.add(tagName);
 
-                // Only add to target notes if it's not the current file (avoid duplicate when editing target note itself)
                 if (target !== file.basename) {
                     targetNotesForTags.set(target, tagName);
                 }
@@ -271,58 +244,88 @@ class KeywordLinker {
             content = addTagsToContent(content, Array.from(tagsToAdd));
         }
 
-        // Check if content changed
         const changed = content !== originalContent;
 
-        // Save if not preview mode
-        if (!preview && changed) {
-            if (editor && savedCursor) {
-                // Get the current content from the editor (may have changed since we started)
-                const currentEditorContent = editor.getValue();
+        return {
+            newContent: content,
+            originalContent: originalContent,
+            originalLength: originalLength,
+            changed: changed,
+            linkCount: linkCount,
+            changes: changes,
+            tagsToAdd: tagsToAdd,
+            targetNotesForTags: targetNotesForTags,
+            allReplacements: allReplacements
+        };
+    }
 
-                // If the editor content has changed from what we read, don't apply changes
-                // This prevents overwriting content the user is actively typing
-                if (currentEditorContent !== originalContent) {
-                    return null;
+    async linkKeywordsInFile(file, preview = false, skipTags = false) {
+        // SAFETY CHECK: Ensure we only process markdown files
+        if (file.extension !== 'md') {
+            return null;
+        }
+
+        // Check if this file is currently open in an editor
+        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        const isActiveFile = activeView && activeView.file.path === file.path;
+        const editor = isActiveFile ? activeView.editor : null;
+
+        // If auto-create is enabled, ensure all target notes exist before processing
+        // This needs to happen before we enter the processing callback
+        if (this.settings.autoCreateNotes) {
+            const keywordMap = buildKeywordMap(this.app, this.settings);
+            for (const keyword of Object.keys(keywordMap)) {
+                const target = keywordMap[keyword].target;
+                if (target && target.trim()) {
+                    await ensureNoteExists(this.app, this.settings, target);
                 }
+            }
+        }
 
-                // Calculate cursor position in original content as character offset
-                const lines = originalContent.split('\n');
+        let result = null;
+
+        if (editor) {
+            // File is open in editor - use editor.getValue()/setValue()
+            const savedCursor = !preview ? editor.getCursor() : null;
+            const currentContent = editor.getValue();
+
+            // Process the content
+            const processed = this.processContent(currentContent, file, preview, skipTags);
+
+            if (!processed.changed) {
+                return null;
+            }
+
+            // Save if not preview mode
+            if (!preview) {
+                // Calculate cursor position adjustment
+                const lines = processed.originalContent.split('\n');
                 let cursorOffset = 0;
                 for (let i = 0; i < savedCursor.line && i < lines.length; i++) {
-                    cursorOffset += lines[i].length + 1; // +1 for newline
+                    cursorOffset += lines[i].length + 1;
                 }
                 cursorOffset += savedCursor.ch;
 
-                // Calculate adjustment needed for cursor position
-                // We need to account for ALL replacements that happened before the cursor
-                // Replacements are sorted by original index position
                 let cursorAdjustment = 0;
-                for (const replacement of allReplacements) {
-                    // Check if replacement starts before the original cursor position
+                for (const replacement of processed.allReplacements) {
                     if (replacement.index < cursorOffset) {
                         cursorAdjustment += replacement.lengthDiff;
                     }
                 }
 
-                // Calculate new cursor position in the content with keyword replacements
                 let newCursorOffset = cursorOffset + cursorAdjustment;
+                const wasCursorNearEnd = cursorOffset >= processed.originalLength - 10;
 
-                // Account for tag additions if cursor is at/near end
-                const wasCursorNearEnd = cursorOffset >= originalLength - 10;
+                // Apply changes via editor
+                editor.setValue(processed.newContent);
 
-                // Replace entire content using editor
-                editor.setValue(content);
-
-                // If cursor was near the end and tags were added, keep it before the tags
-                if (tagsToAdd.size > 0 && wasCursorNearEnd) {
-                    // Find the last line with actual content (before tags)
-                    const newLines = content.split('\n');
+                // Restore cursor position
+                if (processed.tagsToAdd.size > 0 && wasCursorNearEnd) {
+                    const newLines = processed.newContent.split('\n');
                     let lastContentLine = -1;
 
                     for (let i = newLines.length - 1; i >= 0; i--) {
                         const line = newLines[i].trim();
-                        // Skip empty lines and tag lines
                         if (line !== '' && !line.match(/^#[\w\-]+(\s+#[\w\-]+)*$/)) {
                             lastContentLine = i;
                             break;
@@ -330,18 +333,15 @@ class KeywordLinker {
                     }
 
                     if (lastContentLine >= 0) {
-                        // Place cursor at end of last content line
                         editor.setCursor({
                             line: lastContentLine,
                             ch: newLines[lastContentLine].length
                         });
                     } else {
-                        // Fallback: place at start of document
                         editor.setCursor({ line: 0, ch: 0 });
                     }
                 } else {
-                    // Convert offset back to line/ch for normal cursor restoration
-                    const newLines = content.split('\n');
+                    const newLines = processed.newContent.split('\n');
                     let remainingOffset = newCursorOffset;
                     let newLine = 0;
                     let newCh = 0;
@@ -352,46 +352,76 @@ class KeywordLinker {
                             newCh = remainingOffset;
                             break;
                         }
-                        remainingOffset -= newLines[i].length + 1; // +1 for newline
+                        remainingOffset -= newLines[i].length + 1;
                     }
 
-                    // Restore adjusted cursor position
                     editor.setCursor({ line: newLine, ch: newCh });
                 }
-            } else {
-                // File not open in editor, use vault.modify
-                await this.app.vault.modify(file, content);
+
+                // Add tags to target notes
+                if (!skipTags) {
+                    for (const [targetNoteName, tagName] of processed.targetNotesForTags) {
+                        await addTagToTargetNote(this.app, targetNoteName, tagName);
+                    }
+                }
             }
 
-            // Add tags to target notes as well (unless skipTags is true)
-            if (!skipTags) {
-                for (const [targetNoteName, tagName] of targetNotesForTags) {
+            result = {
+                changed: true,
+                linkCount: processed.linkCount,
+                changes: processed.changes,
+                preview: preview ? processed.newContent : null
+            };
+
+            if (skipTags && (processed.tagsToAdd.size > 0 || processed.targetNotesForTags.size > 0)) {
+                result.pendingTags = {
+                    tagsToAdd: Array.from(processed.tagsToAdd),
+                    targetNotesForTags: processed.targetNotesForTags
+                };
+            }
+        } else {
+            // File not open in editor - use vault.process()
+            let processed = null;
+
+            await this.app.vault.process(file, (data) => {
+                processed = this.processContent(data, file, preview, skipTags);
+
+                if (!processed.changed || preview) {
+                    // Return original data unchanged
+                    return data;
+                }
+
+                // Return the new content to be saved
+                return processed.newContent;
+            });
+
+            if (!processed || !processed.changed) {
+                return null;
+            }
+
+            // Add tags to target notes (only if not preview and not skipTags)
+            if (!preview && !skipTags) {
+                for (const [targetNoteName, tagName] of processed.targetNotesForTags) {
                     await addTagToTargetNote(this.app, targetNoteName, tagName);
                 }
             }
-        }
 
-        // Return results
-        if (changed) {
-            const result = {
+            result = {
                 changed: true,
-                linkCount: linkCount,
-                changes: changes,
-                preview: preview ? content : null
+                linkCount: processed.linkCount,
+                changes: processed.changes,
+                preview: preview ? processed.newContent : null
             };
 
-            // If skipTags is true and there are tags to add, include them in the result
-            if (skipTags && (tagsToAdd.size > 0 || targetNotesForTags.size > 0)) {
+            if (skipTags && (processed.tagsToAdd.size > 0 || processed.targetNotesForTags.size > 0)) {
                 result.pendingTags = {
-                    tagsToAdd: Array.from(tagsToAdd),
-                    targetNotesForTags: targetNotesForTags
+                    tagsToAdd: Array.from(processed.tagsToAdd),
+                    targetNotesForTags: processed.targetNotesForTags
                 };
             }
-
-            return result;
         }
 
-        return null;
+        return result;
     }
 }
 
