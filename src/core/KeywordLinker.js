@@ -90,7 +90,9 @@ class KeywordLinker {
 
             const flags = this.settings.caseSensitive ? 'g' : 'gi';
             const escapedKeyword = escapeRegex(keyword);
-            const pattern = new RegExp(`\\b${escapedKeyword}\\b`, flags);
+            const startBoundary = /^\w/.test(keyword) ? '\\b' : '(?<![\\w])';
+            const endBoundary = /\w$/.test(keyword) ? '\\b' : '(?![\\w])';
+            const pattern = new RegExp(`${startBoundary}${escapedKeyword}${endBoundary}`, flags);
 
             let match;
             const replacements = [];
