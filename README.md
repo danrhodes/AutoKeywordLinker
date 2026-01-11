@@ -2,6 +2,10 @@
 
 Automatically convert keywords into wiki-style links throughout your Obsidian vault. This plugin helps you build a richly interconnected knowledge graph by intelligently linking keywords to their target notes, creating a web of backlinks that reveals hidden connections in your notes.
 
+If my plugins have helped streamline your workflow, consider buying me a coffee! It supports ongoing development, bug fixes, and new features. ☕
+
+[![Buy Me A Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://www.buymeacoffee.com/danrhodes)
+
 ## 🌟 Overview
 
 Auto Keyword Linker streamlines the process of creating and maintaining links in your Obsidian vault. Instead of manually typing `[[brackets]]` around every mention of a person, place, concept, or project, simply define your keywords once and let the plugin handle the rest. The plugin intelligently finds and links keywords while respecting existing links, code blocks, and other markdown formatting.
