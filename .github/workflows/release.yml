@@ -142,10 +142,8 @@ jobs:
 
       - name: Create release package
         run: |
-          mkdir release
-          cp main.js manifest.json styles.css release/
-          cd release
-          zip -r ../AutoKeywordLinker-${{ steps.final_version.outputs.version }}.zip .
+          # Create a clean zip with only the three required files
+          zip AutoKeywordLinker-${{ steps.final_version.outputs.version }}.zip main.js manifest.json styles.css
 
       - name: Commit manifest changes (full release only)
         if: steps.release_type.outputs.type == 'full'
@@ -159,7 +157,7 @@ jobs:
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "AutoKeywordLinker-${{ steps.final_version.outputs.version }}.zip"
+          artifacts: "main.js,manifest.json,styles.css,AutoKeywordLinker-${{ steps.final_version.outputs.version }}.zip"
           tag: ${{ steps.final_version.outputs.tag }}
           name: ${{ steps.final_version.outputs.version }}
           body: ${{ steps.changelog.outputs.notes }}
