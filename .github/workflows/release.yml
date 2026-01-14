@@ -82,8 +82,15 @@ jobs:
           if [ "${{ steps.release_type.outputs.type }}" == "full" ]; then
             VERSION="${{ steps.new_version.outputs.version }}"
           else
+            CURRENT_VERSION="${{ steps.version.outputs.current }}"
+            
+            # Count all existing pre-release tags for this base version
+            # This includes tags that may have had their releases deleted
+            EXISTING_COUNT=$(git tag -l "${CURRENT_VERSION}-pre-release.*" | wc -l)
+            NEXT_COUNT=$((EXISTING_COUNT + 1))
+            
             SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-            VERSION="${{ steps.version.outputs.current }}-pre-release-${SHORT_SHA}"
+            VERSION="${CURRENT_VERSION}-pre-release.${NEXT_COUNT}-${SHORT_SHA}"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$VERSION" >> $GITHUB_OUTPUT
@@ -112,7 +119,7 @@ jobs:
               RANGE="${LAST_TAG}..HEAD"
             fi
           else
-            LAST_PRERELEASE=$(git describe --tags --abbrev=0 --match="*-pre-release-*" 2>/dev/null || echo "")
+            LAST_PRERELEASE=$(git describe --tags --abbrev=0 --match="*-pre-release.*" 2>/dev/null || echo "")
             if [ -z "$LAST_PRERELEASE" ]; then
               RANGE="-1 HEAD"
             else
@@ -176,12 +183,16 @@ jobs:
             });
             
             const preReleases = releases
-              .filter(r => r.prerelease && r.tag_name.includes('-pre-release-'))
+              .filter(r => r.prerelease && r.tag_name.includes('-pre-release.'))
               .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             
             const toDelete = preReleases.slice(25);
             
+            console.log(`Found ${preReleases.length} pre-releases total, keeping 25, deleting ${toDelete.length}`);
+            
             for (const release of toDelete) {
+              console.log(`Deleting release: ${release.tag_name} (created ${release.created_at})`);
+              
               await github.rest.repos.deleteRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -194,7 +205,10 @@ jobs:
                   repo: context.repo.repo,
                   ref: `tags/${release.tag_name}`
                 });
+                console.log(`Deleted tag: ${release.tag_name}`);
               } catch (e) {
-                console.log(`Could not delete tag ${release.tag_name}`);
+                console.log(`Could not delete tag ${release.tag_name}: ${e.message}`);
               }
             }
+            
+            console.log('Cleanup complete!');
