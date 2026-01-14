@@ -35,15 +35,6 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: '18'
-          cache: 'npm'
-
-      - name: Cache dependencies
-        uses: actions/cache@v3
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
 
       - name: Validate manifest.json
         run: |
@@ -52,7 +43,7 @@ jobs:
 
       - name: Install dependencies
         if: ${{ !inputs.skip_build }}
-        run: npm ci
+        run: npm install
 
       - name: Run linter
         if: ${{ !inputs.skip_build }}
