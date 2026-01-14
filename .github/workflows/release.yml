@@ -2,11 +2,6 @@ name: Build and Release
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.github/**'
-      - '!.github/workflows/**'
   workflow_dispatch:
     inputs:
       release_type:
@@ -17,11 +12,6 @@ on:
           - patch
           - minor
           - major
-      skip_build:
-        description: 'Skip build (re-release existing build)'
-        required: false
-        type: boolean
-        default: false
 
 jobs:
   build:
@@ -36,40 +26,10 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Validate manifest.json
-        run: |
-          jq empty manifest.json || (echo "Invalid manifest.json" && exit 1)
-          jq empty versions.json || (echo "Invalid versions.json" && exit 1)
-
-      - name: Install dependencies
-        if: ${{ !inputs.skip_build }}
-        run: npm install
-
-      - name: Run linter
-        if: ${{ !inputs.skip_build }}
-        run: npm run lint || echo "No lint script found, skipping"
-        continue-on-error: true
-
-      - name: Run tests
-        if: ${{ !inputs.skip_build }}
-        run: npm test || echo "No test script found, skipping"
-        continue-on-error: true
-
       - name: Build
-        if: ${{ !inputs.skip_build }}
-        id: build
         run: |
+          npm install
           npm run build
-          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
-
-      - name: Verify build outputs
-        run: |
-          for file in main.js manifest.json styles.css; do
-            if [ ! -f "$file" ]; then
-              echo "Missing required file: $file"
-              exit 1
-            fi
-          done
 
       - name: Determine release type
         id: release_type
@@ -87,27 +47,6 @@ jobs:
         run: |
           CURRENT_VERSION=$(jq -r '.version' manifest.json)
           echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-
-      - name: Check if version already exists (full release only)
-        if: steps.release_type.outputs.type == 'full'
-        run: |
-          RELEASE_TYPE="${{ github.event.inputs.release_type }}"
-          CURRENT="${{ steps.version.outputs.current }}"
-          IFS='.' read -r -a parts <<< "$CURRENT"
-          MAJOR="${parts[0]}"
-          MINOR="${parts[1]}"
-          PATCH="${parts[2]}"
-          
-          case "$RELEASE_TYPE" in
-            major) NEW_VERSION="$((MAJOR + 1)).0.0" ;;
-            minor) NEW_VERSION="${MAJOR}.$((MINOR + 1)).0" ;;
-            patch) NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
-          esac
-          
-          if git rev-parse "v$NEW_VERSION" >/dev/null 2>&1; then
-            echo "Error: Tag v$NEW_VERSION already exists!"
-            exit 1
-          fi
 
       - name: Calculate new version (full release only)
         if: steps.release_type.outputs.type == 'full'
@@ -158,7 +97,7 @@ jobs:
             '. + {($version): $min}' versions.json > versions.tmp
           mv versions.tmp versions.json
 
-      - name: Generate changelog with categories
+      - name: Generate changelog
         id: changelog
         run: |
           if [ "${{ steps.release_type.outputs.type }}" == "full" ]; then
@@ -177,7 +116,6 @@ jobs:
             fi
           fi
           
-          # Categorize commits
           {
             echo "### ✨ Features"
             git log --pretty=format:"- %s (%h)" $RANGE | grep -iE "^- (feat|feature)" || echo "- No new features"
@@ -198,33 +136,12 @@ jobs:
             echo "EOF"
           } >> $GITHUB_OUTPUT
 
-      - name: Generate build metadata
-        id: metadata
-        run: |
-          {
-            echo "metadata<<EOF"
-            echo "**Build Information**"
-            echo "- Build Date: $(date -u +%Y-%m-%d\ %H:%M:%S\ UTC)"
-            echo "- Commit: [\`${GITHUB_SHA:0:7}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})"
-            echo "- Branch: \`${{ github.ref_name }}\`"
-            if [ "${{ steps.release_type.outputs.type }}" == "pre" ]; then
-              echo "- Type: Pre-release (automated)"
-            else
-              echo "- Type: Full release (${{ github.event.inputs.release_type }})"
-            fi
-            echo "EOF"
-          } >> $GITHUB_OUTPUT
-
       - name: Create release package
         run: |
           mkdir release
           cp main.js manifest.json styles.css release/
           cd release
           zip -r ../AutoKeywordLinker-${{ steps.final_version.outputs.version }}.zip .
-          
-          # Generate checksums
-          cd ..
-          sha256sum AutoKeywordLinker-${{ steps.final_version.outputs.version }}.zip > checksums.txt
 
       - name: Commit manifest changes (full release only)
         if: steps.release_type.outputs.type == 'full'
@@ -232,31 +149,16 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email github-actions[bot]@users.noreply.github.com
           git add manifest.json versions.json
-          git commit -m "Release version ${{ steps.final_version.outputs.version }}" \
-                     -m "Automated version bump from GitHub Actions"
+          git commit -m "Release version ${{ steps.final_version.outputs.version }}"
           git push
 
       - name: Create Release
-        id: create_release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "AutoKeywordLinker-${{ steps.final_version.outputs.version }}.zip,checksums.txt"
+          artifacts: "AutoKeywordLinker-${{ steps.final_version.outputs.version }}.zip"
           tag: ${{ steps.final_version.outputs.tag }}
           name: ${{ steps.final_version.outputs.version }}
-          body: |
-            ## Changes
-            ${{ steps.changelog.outputs.notes }}
-            
-            ---
-            ${{ steps.metadata.outputs.metadata }}
-            
-            ### 📦 Installation
-            Download `AutoKeywordLinker-${{ steps.final_version.outputs.version }}.zip` and extract to your Obsidian vault's `.obsidian/plugins/` directory.
-            
-            ### ✅ Checksums
-            ```
-            $(cat checksums.txt)
-            ```
+          body: ${{ steps.changelog.outputs.notes }}
           prerelease: ${{ steps.release_type.outputs.is_prerelease }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -277,10 +179,7 @@ jobs:
             
             const toDelete = preReleases.slice(25);
             
-            console.log(`Found ${preReleases.length} pre-releases, keeping 25, deleting ${toDelete.length}`);
-            
             for (const release of toDelete) {
-              console.log(`Deleting pre-release: ${release.tag_name} (${release.created_at})`);
               await github.rest.repos.deleteRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -294,35 +193,6 @@ jobs:
                   ref: `tags/${release.tag_name}`
                 });
               } catch (e) {
-                console.log(`Could not delete tag ${release.tag_name}: ${e.message}`);
+                console.log(`Could not delete tag ${release.tag_name}`);
               }
             }
-
-      - name: Post summary
-        if: always()
-        run: |
-          {
-            echo "## 🚀 Release Summary"
-            echo "**Version:** ${{ steps.final_version.outputs.version }}"
-            echo "**Type:** ${{ steps.release_type.outputs.type == 'full' && 'Full Release' || 'Pre-release' }}"
-            echo "**Tag:** ${{ steps.final_version.outputs.tag }}"
-            if [ "${{ steps.create_release.outcome }}" == "success" ]; then
-              echo "**Status:** ✅ Success"
-              echo "**Release URL:** ${{ steps.create_release.outputs.html_url }}"
-            else
-              echo "**Status:** ❌ Failed"
-            fi
-          } >> $GITHUB_STEP_SUMMARY
-
-      - name: Notify on failure
-        if: failure() && steps.release_type.outputs.type == 'full'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `Release workflow failed for v${{ steps.final_version.outputs.version }}`,
-              body: `The release workflow failed. Check the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.`,
-              labels: ['automated', 'release-failure']
-            });
