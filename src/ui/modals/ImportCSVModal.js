@@ -80,7 +80,7 @@ class ImportCSVModal extends Modal {
                     }
 
                     let addedCount = 0;
-                    let mergedCount = 0;
+                    let updatedCount = 0;
                     let errorCount = 0;
                     const errors = [];
 
@@ -139,20 +139,35 @@ class ImportCSVModal extends Modal {
                             );
 
                             if (existingIndex !== -1) {
-                                // Merge variations into existing keyword
+                                // Update existing keyword with new field values
                                 const existing = this.plugin.settings.keywords[existingIndex];
-                                const existingVars = new Set(existing.variations.map(v => v.toLowerCase()));
+                                let hasChanges = false;
 
-                                let addedVars = false;
-                                for (let variation of keywordObj.variations) {
-                                    if (!existingVars.has(variation.toLowerCase())) {
-                                        existing.variations.push(variation);
-                                        addedVars = true;
+                                // Compare and update all fields (except keyword name)
+                                const fieldsToCompare = [
+                                    'target', 'enableTags', 'linkScope', 'scopeFolder',
+                                    'useRelativeLinks', 'blockRef', 'requireTag',
+                                    'onlyInNotesLinkingTo', 'suggestMode', 'preventSelfLink'
+                                ];
+
+                                for (const field of fieldsToCompare) {
+                                    if (existing[field] !== keywordObj[field]) {
+                                        existing[field] = keywordObj[field];
+                                        hasChanges = true;
                                     }
                                 }
 
-                                if (addedVars) {
-                                    mergedCount++;
+                                // Merge variations (add new ones, keep existing)
+                                const existingVars = new Set(existing.variations.map(v => v.toLowerCase()));
+                                for (let variation of keywordObj.variations) {
+                                    if (!existingVars.has(variation.toLowerCase())) {
+                                        existing.variations.push(variation);
+                                        hasChanges = true;
+                                    }
+                                }
+
+                                if (hasChanges) {
+                                    updatedCount++;
                                 }
                             } else {
                                 // Add new keyword
@@ -171,14 +186,14 @@ class ImportCSVModal extends Modal {
 
                     // Build result message
                     let message = '';
-                    if (addedCount > 0 && mergedCount > 0) {
-                        message = `Imported: ${addedCount} new keyword(s), merged variations into ${mergedCount} existing keyword(s)`;
+                    if (addedCount > 0 && updatedCount > 0) {
+                        message = `Added ${addedCount} new keyword(s), updated ${updatedCount} existing keyword(s)`;
                     } else if (addedCount > 0) {
-                        message = `Imported ${addedCount} new keyword(s)`;
-                    } else if (mergedCount > 0) {
-                        message = `Merged variations into ${mergedCount} existing keyword(s)`;
+                        message = `Added ${addedCount} new keyword(s)`;
+                    } else if (updatedCount > 0) {
+                        message = `Updated ${updatedCount} existing keyword(s)`;
                     } else {
-                        message = `No new keywords or variations to import`;
+                        message = `No changes to import`;
                     }
 
                     if (errorCount > 0) {

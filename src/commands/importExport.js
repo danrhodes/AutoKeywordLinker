@@ -92,8 +92,10 @@ async function exportKeywordsToCSV(app, settings) {
         }
 
         const csvContent = rows.join('\n');
-        const date = new Date().toISOString().split('T')[0];
-        const filename = `auto-keyword-linker-export-${date}.csv`;
+        const now = new Date();
+        const date = now.toISOString().split('T')[0];
+        const time = now.toTimeString().split(' ')[0].replace(/:/g, '');
+        const filename = `auto-keyword-linker-export-${date}-${time}.csv`;
 
         await app.vault.create(filename, csvContent);
         new Notice(`Keywords exported to ${filename}`);
