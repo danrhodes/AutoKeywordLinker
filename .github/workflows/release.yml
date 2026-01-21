@@ -129,16 +129,16 @@ jobs:
           
           {
             echo "### ✨ Features"
-            git log --pretty=format:"- %s (%h)" $RANGE | grep -iE "^- (feat|feature)" || echo "- No new features"
+            git log --pretty=format:"- %s (%h)" $RANGE | grep -iE "^- (feat|feature)[:(]" || echo "- No new features"
             echo ""
             echo "### 🐛 Bug Fixes"
-            git log --pretty=format:"- %s (%h)" $RANGE | grep -iE "^- (fix|bugfix)" || echo "- No bug fixes"
+            git log --pretty=format:"- %s (%h)" $RANGE | grep -iE "^- (fix|bugfix|bug)[:(]" || echo "- No bug fixes"
             echo ""
             echo "### 📝 Documentation"
-            git log --pretty=format:"- %s (%h)" $RANGE | grep -iE "^- (docs|doc)" || echo "- No documentation changes"
+            git log --pretty=format:"- %s (%h)" $RANGE | grep -iE "^- (docs|doc)[:(]" || echo "- No documentation changes"
             echo ""
             echo "### 🔧 Other Changes"
-            git log --pretty=format:"- %s (%h)" $RANGE | grep -viE "^- (feat|feature|fix|bugfix|docs|doc)" || echo "- No other changes"
+            git log --pretty=format:"- %s (%h)" $RANGE | grep -viE "^- (feat|feature|fix|bugfix|bug|docs|doc)[:(]" || echo "- No other changes"
           } > changelog.txt
           
           {
