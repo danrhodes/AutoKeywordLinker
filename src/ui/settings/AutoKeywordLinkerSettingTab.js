@@ -32,6 +32,32 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
     }
 
     /**
+     * Check if a keyword already exists (case-insensitive)
+     * @param {string} keyword - The keyword to check
+     * @param {string} excludeId - Optional ID to exclude (for editing existing keywords)
+     * @returns {Object|null} The existing keyword object if duplicate found, null otherwise
+     */
+    isDuplicateKeyword(keyword, excludeId = null) {
+        if (!keyword || !keyword.trim()) return null;
+        const lowerKeyword = keyword.toLowerCase().trim();
+
+        for (const kw of this.plugin.settings.keywords) {
+            if (excludeId && kw.id === excludeId) continue;
+
+            // Check main keyword
+            if (kw.keyword && kw.keyword.toLowerCase().trim() === lowerKeyword) {
+                return kw;
+            }
+
+            // Check variations
+            if (kw.variations && kw.variations.some(v => v.toLowerCase().trim() === lowerKeyword)) {
+                return kw;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Display the settings tab
      * Called when the user opens the settings
      */
@@ -99,8 +125,11 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             .setDesc('Define keywords and their variations. All variations will link to the target note.')
             .setHeading();
 
+        // Search and controls row
+        const controlsRow = containerEl.createDiv({cls: 'akl-controls-row'});
+
         // Search box for filtering keywords
-        const searchContainer = containerEl.createDiv({cls: 'akl-search-container'});
+        const searchContainer = controlsRow.createDiv({cls: 'akl-search-container'});
         const searchInput = searchContainer.createEl('input', {
             type: 'text',
             placeholder: 'Search keywords...',
@@ -110,6 +139,22 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         searchInput.addEventListener('input', (e) => {
             this.searchFilter = e.target.value;
             this.renderKeywords(keywordsDiv);
+        });
+
+        // Fold/Unfold all button
+        const foldBtnContainer = controlsRow.createDiv({cls: 'akl-fold-btn-container'});
+        const allCollapsed = this.plugin.settings.keywords.every(kw => kw.collapsed !== false);
+        const foldBtn = foldBtnContainer.createEl('button', {
+            text: allCollapsed ? '▼ Unfold All' : '▲ Fold All',
+            cls: 'akl-fold-button'
+        });
+        foldBtn.addEventListener('click', async () => {
+            const shouldCollapse = !allCollapsed;
+            for (const kw of this.plugin.settings.keywords) {
+                kw.collapsed = shouldCollapse;
+            }
+            await this.plugin.saveSettings();
+            this.display();
         });
 
         // Container for keyword list
@@ -181,7 +226,7 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         // Groups section header
         new Setting(containerEl)
             .setName('Keyword groups')
-            .setDesc('Organize keywords into groups with shared settings. Keywords inherit settings from their group.')
+            .setDesc('Organize keywords into groups with shared settings. Keywords in a group use the group\'s settings.')
             .setHeading();
 
         // Container for groups list
@@ -523,30 +568,62 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             const groupName = isInGroup ? this.plugin.settings.keywordGroups.find(g => g.id === item.groupId)?.name : null;
 
             // Keyword input field
-            new Setting(cardBody)
+            const keywordSetting = new Setting(cardBody)
                 .setName('Keyword')
                 .setDesc('The text to search for in your notes')
                 .addText(text => {
                     text.setValue(item.keyword)
-                        .setPlaceholder('Enter keyword...')
-                        .onChange(async (value) => {
-                            this.plugin.settings.keywords[i].keyword = value;
-                            await this.plugin.saveSettings();
-                            // Update card header title without full re-render
-                            this.updateCardHeader(cardTitle, value, this.plugin.settings.keywords[i].target);
-                        });
+                        .setPlaceholder('Enter keyword...');
                     text.inputEl.addClass('akl-input');
 
-                    // Auto-fill target only when user leaves the field (on blur)
+                    // Store reference to track the pending value
+                    let pendingValue = item.keyword;
+
+                    // Update pending value on every keystroke (but don't save yet)
+                    text.inputEl.addEventListener('input', () => {
+                        pendingValue = text.inputEl.value;
+                        // Clear any error state while typing
+                        text.inputEl.removeClass('akl-input-error');
+                        keywordSetting.setDesc('The text to search for in your notes');
+                        keywordSetting.descEl.removeClass('akl-error-text');
+                    });
+
+                    // Validate and save on blur
                     text.inputEl.addEventListener('blur', async () => {
-                        // If target is empty, auto-fill it with the keyword
-                        if (!this.plugin.settings.keywords[i].target && this.plugin.settings.keywords[i].keyword) {
-                            this.plugin.settings.keywords[i].target = this.plugin.settings.keywords[i].keyword;
+                        const value = pendingValue.trim();
+
+                        // Check for duplicates before saving
+                        if (value) {
+                            const duplicate = this.isDuplicateKeyword(value, item.id);
+                            if (duplicate) {
+                                text.inputEl.addClass('akl-input-error');
+                                keywordSetting.setDesc(`Duplicate: "${value}" already exists (keyword: "${duplicate.keyword}" → ${duplicate.target})`);
+                                keywordSetting.descEl.addClass('akl-error-text');
+                                // Revert to previous value
+                                text.setValue(item.keyword);
+                                pendingValue = item.keyword;
+                                return;
+                            }
+                        }
+
+                        // Save the value
+                        this.plugin.settings.keywords[i].keyword = value;
+                        await this.plugin.saveSettings();
+                        // Update card header title
+                        this.updateCardHeader(cardTitle, value, this.plugin.settings.keywords[i].target);
+
+                        // Auto-fill target if empty
+                        if (!this.plugin.settings.keywords[i].target && value) {
+                            this.plugin.settings.keywords[i].target = value;
                             await this.plugin.saveSettings();
-                            // Update card header and re-render to show the auto-filled target
                             this.display();
                         }
                     });
+
+                    // Auto-focus if this is a new keyword (empty)
+                    if (!item.keyword) {
+                        setTimeout(() => text.inputEl.focus(), 50);
+                    }
                 });
 
             // Target note input field with fuzzy search modal
@@ -720,11 +797,19 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                         item.variations = [];
                     }
 
-                    // Check for duplicates (case-insensitive)
-                    const isDuplicate = item.variations.some(v => v.toLowerCase() === newVariation.toLowerCase());
+                    // Check for duplicates within this keyword's variations
+                    const isDuplicateLocal = item.variations.some(v => v.toLowerCase() === newVariation.toLowerCase());
 
-                    if (isDuplicate) {
-                        new Notice('Variation already exists');
+                    if (isDuplicateLocal) {
+                        new Notice('Variation already exists in this keyword');
+                        variationInput.value = '';
+                        return;
+                    }
+
+                    // Check for duplicates across all keywords (excluding this one's variations)
+                    const duplicateKeyword = this.isDuplicateKeyword(newVariation, item.id);
+                    if (duplicateKeyword) {
+                        new Notice(`"${newVariation}" already exists as keyword "${duplicateKeyword.keyword}" → ${duplicateKeyword.target}`);
                         variationInput.value = '';
                         return;
                     }
@@ -1081,18 +1166,19 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             const settingsSection = cardBody.createDiv({cls: 'akl-group-settings-section'});
             settingsSection.createEl('h4', {text: 'Group settings', cls: 'akl-subsection-header'});
             settingsSection.createEl('p', {
-                text: 'These settings apply to all keywords in this group (unless overridden per-keyword).',
+                text: 'These settings apply to all keywords in this group.',
                 cls: 'akl-hint-text'
             });
 
             // Link scope dropdown
             new Setting(settingsSection)
                 .setName('Link scope')
-                .setDesc('Where this group\'s keywords should create links')
+                .setDesc('Control where keywords in this group will be linked')
                 .addDropdown(dropdown => dropdown
-                    .addOption('vault-wide', 'Vault-wide (link in all notes)')
-                    .addOption('source-folder', 'Source folder only')
-                    .addOption('target-folder', 'Target folder only')
+                    .addOption('vault-wide', 'Vault-wide (everywhere)')
+                    .addOption('same-folder', 'Same folder only')
+                    .addOption('source-folder', 'Source in specific folder')
+                    .addOption('target-folder', 'Target in specific folder')
                     .setValue(group.settings.linkScope || 'vault-wide')
                     .onChange(async (value) => {
                         group.settings.linkScope = value;

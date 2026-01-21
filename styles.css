@@ -791,3 +791,48 @@
     font-style: italic;
     color: var(--text-muted);
 }
+
+/* Input validation error states */
+.akl-input-error {
+    border-color: var(--text-error) !important;
+    box-shadow: 0 0 0 2px rgba(var(--text-error-rgb), 0.2) !important;
+}
+
+.akl-error-text {
+    color: var(--text-error) !important;
+    font-weight: 500;
+}
+
+/* Controls row (search + fold button) */
+.akl-controls-row {
+    display: flex;
+    gap: 0.75em;
+    align-items: center;
+    margin-bottom: 1em;
+}
+
+.akl-controls-row .akl-search-container {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.akl-fold-btn-container {
+    flex-shrink: 0;
+}
+
+.akl-fold-button {
+    padding: 0.6em 1em;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    color: var(--text-normal);
+    cursor: pointer;
+    font-size: 0.9em;
+    white-space: nowrap;
+    transition: all 0.2s ease;
+}
+
+.akl-fold-button:hover {
+    background: var(--background-modifier-hover);
+    border-color: var(--interactive-accent);
+}

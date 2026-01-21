@@ -25,22 +25,24 @@ function getEffectiveKeywordSettings(settings, keyword) {
         preventSelfLink: false
     };
 
-    // If keyword is in a group, apply group settings as base
+    // If keyword is in a group, use group settings (no keyword-level overrides allowed)
     if (keyword.groupId) {
         const group = settings.keywordGroups.find(g => g.id === keyword.groupId);
         if (group && group.settings) {
             Object.assign(effectiveSettings, group.settings);
         }
+        // Keywords in groups inherit all settings from the group - no overrides
+        return effectiveSettings;
     }
 
-    // Override with keyword-specific settings only if explicitly set (not null/undefined)
-    // null means "inherit from group", so we skip those
+    // Only apply keyword-specific settings if NOT in a group
+    // These settings only apply to standalone keywords
     if (keyword.enableTags !== null && keyword.enableTags !== undefined) effectiveSettings.enableTags = keyword.enableTags;
-    if (keyword.linkScope !== null && keyword.linkScope !== undefined && keyword.linkScope !== 'vault-wide') effectiveSettings.linkScope = keyword.linkScope;
-    if (keyword.scopeFolder !== null && keyword.scopeFolder !== undefined && keyword.scopeFolder !== '') effectiveSettings.scopeFolder = keyword.scopeFolder;
+    if (keyword.linkScope !== null && keyword.linkScope !== undefined) effectiveSettings.linkScope = keyword.linkScope;
+    if (keyword.scopeFolder !== null && keyword.scopeFolder !== undefined) effectiveSettings.scopeFolder = keyword.scopeFolder;
     if (keyword.useRelativeLinks !== null && keyword.useRelativeLinks !== undefined) effectiveSettings.useRelativeLinks = keyword.useRelativeLinks;
-    if (keyword.blockRef !== null && keyword.blockRef !== undefined && keyword.blockRef !== '') effectiveSettings.blockRef = keyword.blockRef;
-    if (keyword.requireTag !== null && keyword.requireTag !== undefined && keyword.requireTag !== '') effectiveSettings.requireTag = keyword.requireTag;
+    if (keyword.blockRef !== null && keyword.blockRef !== undefined) effectiveSettings.blockRef = keyword.blockRef;
+    if (keyword.requireTag !== null && keyword.requireTag !== undefined) effectiveSettings.requireTag = keyword.requireTag;
     if (keyword.onlyInNotesLinkingTo !== null && keyword.onlyInNotesLinkingTo !== undefined) effectiveSettings.onlyInNotesLinkingTo = keyword.onlyInNotesLinkingTo;
     if (keyword.suggestMode !== null && keyword.suggestMode !== undefined) effectiveSettings.suggestMode = keyword.suggestMode;
     if (keyword.preventSelfLink !== null && keyword.preventSelfLink !== undefined) effectiveSettings.preventSelfLink = keyword.preventSelfLink;
@@ -56,6 +58,28 @@ function getEffectiveKeywordSettings(settings, keyword) {
  */
 function buildKeywordMap(app, settings) {
     const map = {};
+    // Track which keywords we've seen (case-insensitive) to detect duplicates
+    const seenKeywords = new Map(); // lowercase -> original keyword text
+
+    // Helper to add a keyword to the map, skipping duplicates
+    const addToMap = (keywordText, target, effectiveSettings, keywordIndex) => {
+        const lowerKey = keywordText.toLowerCase();
+
+        // Check if we've already seen this keyword (case-insensitive)
+        if (seenKeywords.has(lowerKey)) {
+            // Skip duplicate - first one wins
+            console.warn(`Auto Keyword Linker: Skipping duplicate keyword "${keywordText}" (already have "${seenKeywords.get(lowerKey)}")`);
+            return false;
+        }
+
+        seenKeywords.set(lowerKey, keywordText);
+        map[keywordText] = {
+            target: target,
+            ...effectiveSettings,
+            keywordIndex: keywordIndex
+        };
+        return true;
+    };
 
     // Iterate through all keyword entries in settings
     for (let item of settings.keywords) {
@@ -66,23 +90,16 @@ function buildKeywordMap(app, settings) {
 
         // Get effective settings (merges group settings with keyword-specific settings)
         const effectiveSettings = getEffectiveKeywordSettings(settings, item);
+        const keywordIndex = settings.keywords.indexOf(item);
 
         // Add the main keyword with its settings
-        map[item.keyword] = {
-            target: item.target,
-            ...effectiveSettings,
-            keywordIndex: settings.keywords.indexOf(item)
-        };
+        addToMap(item.keyword, item.target, effectiveSettings, keywordIndex);
 
         // Add all manual variations, all pointing to the same target with same settings
         if (item.variations && item.variations.length > 0) {
             for (let variation of item.variations) {
                 if (variation.trim()) {
-                    map[variation] = {
-                        target: item.target,
-                        ...effectiveSettings,
-                        keywordIndex: settings.keywords.indexOf(item)
-                    };
+                    addToMap(variation, item.target, effectiveSettings, keywordIndex);
                 }
             }
         }
@@ -92,14 +109,7 @@ function buildKeywordMap(app, settings) {
         if (aliases && aliases.length > 0) {
             for (let alias of aliases) {
                 if (alias.trim()) {
-                    // Add alias to keyword map (only if not already present)
-                    if (!map[alias]) {
-                        map[alias] = {
-                            target: item.target,
-                            ...effectiveSettings,
-                            keywordIndex: settings.keywords.indexOf(item)
-                        };
-                    }
+                    addToMap(alias, item.target, effectiveSettings, keywordIndex);
                 }
             }
         }
