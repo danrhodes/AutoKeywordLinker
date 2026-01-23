@@ -68,6 +68,11 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         // Add custom CSS for improved UI
         this.addCustomStyles();
 
+        // If we need to scroll to a keyword, switch to Keywords tab
+        if (this.plugin.scrollToKeywordId) {
+            this.currentTab = 'keywords';
+        }
+
         // Tab navigation
         const tabNav = containerEl.createDiv({cls: 'akl-tab-nav'});
 
@@ -468,12 +473,17 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         const searchTerm = this.searchFilter.toLowerCase();
         let visibleCount = 0;
 
+        // Check if we need to scroll to a specific keyword (from addKeywordFromSelection)
+        const scrollToId = this.plugin.scrollToKeywordId;
+        let cardToScrollTo = null;
+
         // Iterate through all keyword entries
         for (let i = 0; i < this.plugin.settings.keywords.length; i++) {
             const item = this.plugin.settings.keywords[i];
 
             // Filter logic: search in keyword, target, and variations
-            if (searchTerm) {
+            // But always show the keyword we need to scroll to
+            if (searchTerm && item.id !== scrollToId) {
                 const matchesKeyword = item.keyword && item.keyword.toLowerCase().includes(searchTerm);
                 const matchesTarget = item.target && item.target.toLowerCase().includes(searchTerm);
                 const matchesVariations = item.variations && item.variations.some(v =>
@@ -493,8 +503,19 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 item.collapsed = false;
             }
 
+            // If this is the keyword we need to scroll to, expand it
+            if (scrollToId && item.id === scrollToId) {
+                item.collapsed = false;
+            }
+
             // Create card container for this keyword entry
             const cardDiv = container.createDiv({cls: 'akl-keyword-card'});
+
+            // Mark this card for scrolling if it's the one we need
+            if (scrollToId && item.id === scrollToId) {
+                cardToScrollTo = cardDiv;
+                cardDiv.addClass('akl-highlight-card');
+            }
 
             // Card header with collapse toggle
             const cardHeader = cardDiv.createDiv({cls: 'akl-card-header'});
@@ -1030,6 +1051,25 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 text: `No keywords match "${this.searchFilter}"`,
                 cls: 'akl-no-results-hint'
             });
+        }
+
+        // Scroll to the keyword card if needed (from addKeywordFromSelection)
+        if (cardToScrollTo && scrollToId) {
+            // Clear the scroll target so we don't scroll again on re-render
+            this.plugin.scrollToKeywordId = null;
+
+            // Scroll the card into view with a delay to ensure the settings modal is fully rendered
+            // Using 300ms to account for modal open animation
+            setTimeout(() => {
+                cardToScrollTo.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                // Add a brief highlight animation
+                cardToScrollTo.addClass('akl-highlight-pulse');
+                setTimeout(() => {
+                    cardToScrollTo.removeClass('akl-highlight-pulse');
+                    cardToScrollTo.removeClass('akl-highlight-card');
+                }, 2000);
+            }, 300);
         }
     }
 

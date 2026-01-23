@@ -5,6 +5,7 @@
  */
 
 const SuggestionHandler = require('../ui/SuggestionHandler');
+const QuickAddKeywordModal = require('../ui/modals/QuickAddKeywordModal');
 
 /**
  * Register all event listeners for the plugin
@@ -41,6 +42,38 @@ function registerEvents(plugin) {
     // Register editor menu to add our option to right-click menu
     plugin.registerEvent(
         plugin.app.workspace.on('editor-menu', (menu, editor) => {
+            // --------------------------------------------------------
+            // ADD KEYWORD FROM SELECTION
+            // --------------------------------------------------------
+            // Check if text is selected
+            const selectedText = editor.getSelection();
+            if (selectedText && selectedText.trim().length > 0) {
+                // Quick add keyword - streamlined modal
+                menu.addItem((item) => {
+                    item
+                        .setTitle('Quick add keyword')
+                        .setIcon('plus-circle')
+                        .onClick(() => {
+                            new QuickAddKeywordModal(plugin.app, plugin, selectedText).open();
+                        });
+                });
+
+                // Add keyword... - opens settings with pre-filled keyword
+                menu.addItem((item) => {
+                    item
+                        .setTitle('Add keyword...')
+                        .setIcon('file-plus')
+                        .onClick(() => {
+                            plugin.addKeywordFromSelection(selectedText.trim());
+                        });
+                });
+
+                menu.addSeparator();
+            }
+
+            // --------------------------------------------------------
+            // LINK SUGGESTIONS
+            // --------------------------------------------------------
             // Check if there are ANY suggestions in the entire document
             const content = editor.getValue();
             const spanPattern = /<span class="akl-suggested-link"[^>]*>([^<]+)<\/span>/;
@@ -49,7 +82,7 @@ function registerEvents(plugin) {
                 // Add menu items at the top
                 menu.addItem((item) => {
                     item
-                        .setTitle('📋 Review all link suggestions...')
+                        .setTitle('Review all link suggestions...')
                         .setIcon('list-checks')
                         .onClick(() => {
                             plugin.reviewSuggestions(editor);
@@ -58,7 +91,7 @@ function registerEvents(plugin) {
 
                 menu.addItem((item) => {
                     item
-                        .setTitle('✓ Accept all suggestions on this line')
+                        .setTitle('Accept all suggestions on this line')
                         .setIcon('check')
                         .onClick(() => {
                             plugin.acceptSuggestionAtCursor(editor);
