@@ -836,3 +836,46 @@
     background: var(--background-modifier-hover);
     border-color: var(--interactive-accent);
 }
+
+/* Quick Add Keyword Modal Styles */
+.akl-quick-add-modal {
+    width: 450px;
+}
+
+.akl-quick-add-modal .modal-content {
+    padding: 1em;
+}
+
+.akl-quick-add-modal .akl-modal-title {
+    margin: 0 0 1em 0;
+    padding-bottom: 0.5em;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.akl-quick-add-modal .setting-item {
+    border: none;
+    padding: 0.75em 0;
+}
+
+.akl-quick-add-modal .akl-input {
+    width: 100%;
+}
+
+/* Highlight card animation (for scroll-to feature) */
+.akl-highlight-card {
+    border-color: var(--interactive-accent) !important;
+    box-shadow: 0 0 0 2px var(--interactive-accent-hover) !important;
+}
+
+.akl-highlight-pulse {
+    animation: highlightPulse 0.5s ease-in-out 2;
+}
+
+@keyframes highlightPulse {
+    0%, 100% {
+        box-shadow: 0 0 0 2px var(--interactive-accent-hover);
+    }
+    50% {
+        box-shadow: 0 0 0 4px var(--interactive-accent-hover), 0 0 20px var(--interactive-accent);
+    }
+}

@@ -524,4 +524,53 @@ module.exports = class AutoKeywordLinker extends Plugin {
     addCustomStyles() {
         return addCustomStyles();
     }
+
+    /**
+     * Add a keyword from selected text, opening the settings tab with pre-filled keyword
+     * @param {string} selectedText - The text selected by the user to become a keyword
+     */
+    async addKeywordFromSelection(selectedText) {
+        const { generateId } = require('./utils/helpers');
+        const { Notice } = require('obsidian');
+
+        // Check for duplicate keyword
+        const existingKeyword = this.settings.keywords.find(
+            kw => kw.keyword.toLowerCase() === selectedText.toLowerCase()
+        );
+        if (existingKeyword) {
+            new Notice(`Keyword "${selectedText}" already exists`);
+            return;
+        }
+
+        // Create new keyword with the selected text pre-filled
+        // Also pre-fill target with keyword name so it's not empty
+        const newKeyword = {
+            id: generateId('kw'),
+            keyword: selectedText,
+            target: selectedText,
+            variations: [],
+            enableTags: null,
+            linkScope: 'vault-wide',
+            scopeFolder: '',
+            useRelativeLinks: null,
+            blockRef: '',
+            requireTag: '',
+            onlyInNotesLinkingTo: null,
+            suggestMode: null,
+            preventSelfLink: null,
+            collapsed: false,
+            groupId: null
+        };
+
+        // Add to settings
+        this.settings.keywords.push(newKeyword);
+        await this.saveSettings();
+
+        // Store the ID of the keyword to scroll to
+        this.scrollToKeywordId = newKeyword.id;
+
+        // Open settings tab to the Keywords section
+        this.app.setting.open();
+        this.app.setting.openTabById(this.manifest.id);
+    }
 }
