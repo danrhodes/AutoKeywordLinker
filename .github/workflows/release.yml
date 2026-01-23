@@ -111,36 +111,60 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
+          # Determine the commit range based on release type
           if [ "${{ steps.release_type.outputs.type }}" == "full" ]; then
             LAST_TAG=$(git describe --tags --abbrev=0 --match="[0-9]*.[0-9]*.[0-9]*" 2>/dev/null || echo "")
             if [ -z "$LAST_TAG" ]; then
-              RANGE="HEAD"
+              COMMITS=$(git log --pretty=format:"- %s (%h)")
             else
-              RANGE="${LAST_TAG}..HEAD"
+              COMMITS=$(git log --pretty=format:"- %s (%h)" "${LAST_TAG}..HEAD")
             fi
           else
             LAST_PRERELEASE=$(git describe --tags --abbrev=0 --match="*-pre-release.*" 2>/dev/null || echo "")
             if [ -z "$LAST_PRERELEASE" ]; then
-              RANGE="-1 HEAD"
+              # No previous pre-release, just get the last commit
+              COMMITS=$(git log -1 --pretty=format:"- %s (%h)")
             else
-              RANGE="${LAST_PRERELEASE}..HEAD"
+              COMMITS=$(git log --pretty=format:"- %s (%h)" "${LAST_PRERELEASE}..HEAD")
             fi
           fi
-          
+
+          # Debug: show what commits were found
+          echo "=== Debug: Commits found ==="
+          echo "$COMMITS"
+          echo "=== End debug ==="
+
+          # Generate changelog by grepping the captured commits
           {
             echo "### ✨ Features"
-            git log --pretty=format:"- %s (%h)" $RANGE | grep -iE "^- (feat|feature)[:(]" || echo "- No new features"
+            if [ -n "$COMMITS" ]; then
+              echo "$COMMITS" | grep -iE "^- (feat|feature): " || echo "- No new features"
+            else
+              echo "- No new features"
+            fi
             echo ""
             echo "### 🐛 Bug Fixes"
-            git log --pretty=format:"- %s (%h)" $RANGE | grep -iE "^- (fix|bugfix|bug)[:(]" || echo "- No bug fixes"
+            if [ -n "$COMMITS" ]; then
+              echo "$COMMITS" | grep -iE "^- (fix|bugfix|bug): " || echo "- No bug fixes"
+            else
+              echo "- No bug fixes"
+            fi
             echo ""
             echo "### 📝 Documentation"
-            git log --pretty=format:"- %s (%h)" $RANGE | grep -iE "^- (docs|doc)[:(]" || echo "- No documentation changes"
+            if [ -n "$COMMITS" ]; then
+              echo "$COMMITS" | grep -iE "^- (docs|doc): " || echo "- No documentation changes"
+            else
+              echo "- No documentation changes"
+            fi
             echo ""
             echo "### 🔧 Other Changes"
-            git log --pretty=format:"- %s (%h)" $RANGE | grep -viE "^- (feat|feature|fix|bugfix|bug|docs|doc)[:(]" || echo "- No other changes"
+            if [ -n "$COMMITS" ]; then
+              echo "$COMMITS" | grep -viE "^- (feat|feature|fix|bugfix|bug|docs|doc): " || echo "- No other changes"
+            else
+              echo "- No other changes"
+            fi
           } > changelog.txt
-          
+
           {
             echo "notes<<EOF"
             cat changelog.txt
