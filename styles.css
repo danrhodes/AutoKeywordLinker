@@ -118,6 +118,43 @@
     margin: 0.5em 0;
 }
 
+.akl-tool-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75em;
+    margin: 0.5em 0 1em 0;
+}
+
+.akl-tool-select {
+    flex: 1;
+    max-width: 300px;
+}
+
+.akl-tool-results {
+    background: var(--background-secondary);
+    border-radius: 6px;
+    padding: 0.75em 1em;
+    margin: 0.5em 0 1em 0;
+}
+
+.akl-tool-results-title {
+    font-weight: 600;
+    margin: 0 0 0.5em 0;
+}
+
+.akl-help-text {
+    color: var(--text-normal);
+    margin: 0 0 1em 0;
+    line-height: 1.5;
+}
+
+.akl-help-list {
+    color: var(--text-normal);
+    padding-left: 1.5em;
+    margin: 0 0 1em 0;
+    line-height: 1.8;
+}
+
 /* Group-specific styles */
 .akl-group-card {
     border-left: 3px solid var(--interactive-accent);

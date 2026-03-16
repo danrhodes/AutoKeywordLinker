@@ -1,6 +1,6 @@
 const { MarkdownView } = require('obsidian');
 const { escapeRegex, getContext } = require('../utils/helpers');
-const { getFrontmatterBounds, isInsideAlias, isPartOfUrl, isInsideLinkOrCode, isInsideBlockReference, isInsideTable, isInsideMath } = require('../utils/detection');
+const { getFrontmatterBounds, isInsideAlias, isPartOfUrl, isInsideLinkOrCode, isInsideBlockReference, isInsideTable, isInsideMath, isInsideHeading } = require('../utils/detection');
 const { getEffectiveKeywordSettings, buildKeywordMap, checkLinkScope } = require('../utils/linking');
 const { findTargetFile, getAliasesForNote, noteHasTag, noteHasLinkToTarget, ensureNoteExists } = require('../utils/noteManagement');
 const { sanitizeTagName, addTagsToContent, addTagToTargetNote } = require('../utils/tagManagement');
@@ -105,6 +105,11 @@ class KeywordLinker {
 
                 // CRITICAL: Skip if inside frontmatter
                 if (frontmatterBounds && matchIndex >= frontmatterBounds.start && matchIndex < frontmatterBounds.end) {
+                    continue;
+                }
+
+                // Skip if on a heading line (e.g. ## My Heading)
+                if (this.settings.skipHeadings && isInsideHeading(content, matchIndex)) {
                     continue;
                 }
 

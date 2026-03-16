@@ -462,6 +462,27 @@ function isInsideTable(content, index) {
     return false;
 }
 
+/**
+ * Check if a position is on a Markdown heading line (lines starting with one or more #)
+ * @param {string} content - The full content
+ * @param {number} index - Position to check
+ * @returns {boolean} True if on a heading line
+ */
+function isInsideHeading(content, index) {
+    // Find the start of the current line
+    let lineStart = index;
+    while (lineStart > 0 && content[lineStart - 1] !== '\n') {
+        lineStart--;
+    }
+
+    // Check if the line starts with one or more # followed by a space
+    let i = lineStart;
+    while (i < content.length && content[i] === '#') {
+        i++;
+    }
+    return i > lineStart && i < content.length && content[i] === ' ';
+}
+
 module.exports = {
     getFrontmatterBounds,
     isInsideAlias,
@@ -469,5 +490,6 @@ module.exports = {
     isInsideLinkOrCode,
     isInsideBlockReference,
     isInsideTable,
-    isInsideMath
+    isInsideMath,
+    isInsideHeading
 };

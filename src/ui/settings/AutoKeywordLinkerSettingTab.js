@@ -28,7 +28,7 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         super(app, plugin);
         this.plugin = plugin;
         this.searchFilter = ''; // Track current search term
-        this.currentTab = 'keywords'; // Track which tab is active: 'keywords', 'groups', 'general', 'import-export'
+        this.currentTab = 'keywords'; // Track which tab is active: 'keywords', 'groups', 'general', 'import-export', 'tools', 'help'
     }
 
     /**
@@ -80,7 +80,9 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             { id: 'keywords', label: 'Keywords', icon: '🔤' },
             { id: 'groups', label: 'Groups', icon: '📁' },
             { id: 'general', label: 'General', icon: '⚙️' },
-            { id: 'import-export', label: 'Import/export', icon: '📦' }
+            { id: 'import-export', label: 'Import/export', icon: '📦' },
+            { id: 'tools', label: 'Tools', icon: '🔧' },
+            { id: 'help', label: 'Help', icon: '❓' }
         ];
 
         tabs.forEach(tab => {
@@ -110,6 +112,12 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 break;
             case 'import-export':
                 this.displayImportExportTab(tabContent);
+                break;
+            case 'tools':
+                this.displayToolsTab(tabContent);
+                break;
+            case 'help':
+                this.displayHelpTab(tabContent);
                 break;
         }
     }
@@ -309,6 +317,17 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.preventSelfLinkGlobal)
                 .onChange(async (value) => {
                     this.plugin.settings.preventSelfLinkGlobal = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        // Skip headings toggle
+        new Setting(containerEl)
+            .setName('Skip headings')
+            .setDesc('Prevent keywords from being linked inside Markdown heading lines (e.g. ## My Heading). Enable this if keywords are breaking heading-based links.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.skipHeadings)
+                .onChange(async (value) => {
+                    this.plugin.settings.skipHeadings = value;
                     await this.plugin.saveSettings();
                 }));
 
@@ -1326,6 +1345,323 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
      * Get all unique folders in the vault
      * @returns {Array<string>} Sorted array of folder paths
      */
+    /**
+     * Display the Tools tab
+     */
+    displayToolsTab(containerEl) {
+
+        // ── Maintenance ──────────────────────────────────────────────────────
+        new Setting(containerEl)
+            .setName('Maintenance')
+            .setDesc('Fix and clean up keyword links across your vault.')
+            .setHeading();
+
+        // 1. Remove links from headings
+        new Setting(containerEl)
+            .setName('Remove links from headings')
+            .setDesc('Scans all notes and unwraps keyword links inside heading lines (e.g. ## [[dog]] → ## dog).')
+            .addButton(button => button
+                .setButtonText('Run')
+                .setCta()
+                .onClick(async () => {
+                    const files = this.app.vault.getMarkdownFiles();
+                    let filesChanged = 0;
+                    let linksRemoved = 0;
+
+                    for (const file of files) {
+                        const content = await this.app.vault.read(file);
+                        const lines = content.split('\n');
+                        let fileChanged = false;
+
+                        const newLines = lines.map(line => {
+                            if (!/^#{1,6} /.test(line)) return line;
+                            return line.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (match, target, alias) => {
+                                linksRemoved++;
+                                fileChanged = true;
+                                return alias || target;
+                            });
+                        });
+
+                        if (fileChanged) {
+                            await this.app.vault.modify(file, newLines.join('\n'));
+                            filesChanged++;
+                        }
+                    }
+
+                    new Notice(`Done — removed ${linksRemoved} link${linksRemoved !== 1 ? 's' : ''} from headings across ${filesChanged} file${filesChanged !== 1 ? 's' : ''}.`);
+                }));
+
+        // 2. Unlink all keywords (vault-wide)
+        new Setting(containerEl)
+            .setName('Unlink all keywords')
+            .setDesc('Removes all wiki-links created by this plugin from every note in the vault, restoring plain text. Cannot be undone.')
+            .addButton(button => button
+                .setButtonText('Run')
+                .setWarning()
+                .onClick(async () => {
+                    const files = this.app.vault.getMarkdownFiles();
+                    let filesChanged = 0;
+                    let linksRemoved = 0;
+
+                    for (const file of files) {
+                        const content = await this.app.vault.read(file);
+                        // Unwrap [[target|alias]] → alias, [[target]] → target
+                        const newContent = content.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (match, target, alias) => {
+                            linksRemoved++;
+                            return alias || target;
+                        });
+
+                        if (newContent !== content) {
+                            await this.app.vault.modify(file, newContent);
+                            filesChanged++;
+                        }
+                    }
+
+                    new Notice(`Done — removed ${linksRemoved} link${linksRemoved !== 1 ? 's' : ''} across ${filesChanged} file${filesChanged !== 1 ? 's' : ''}.`);
+                }));
+
+        // 3. Unlink a specific keyword
+        new Setting(containerEl)
+            .setName('Unlink a specific keyword')
+            .setDesc('Remove links for one keyword across the whole vault without affecting others.')
+            .setHeading();
+
+        const unlinkRow = containerEl.createDiv({ cls: 'akl-tool-row' });
+        const unlinkSelect = unlinkRow.createEl('select', { cls: 'akl-tool-select dropdown' });
+
+        const allKeywords = this.plugin.settings.keywords.flatMap(kw =>
+            [kw.keyword, ...(kw.variations || [])].map(word => ({ word, target: kw.target }))
+        );
+
+        unlinkSelect.createEl('option', { text: '— select keyword —', value: '' });
+        allKeywords.forEach(({ word }) => {
+            unlinkSelect.createEl('option', { text: word, value: word });
+        });
+
+        const unlinkBtn = unlinkRow.createEl('button', { text: 'Unlink', cls: 'mod-warning' });
+        unlinkBtn.addEventListener('click', async () => {
+            const keyword = unlinkSelect.value;
+            if (!keyword) { new Notice('Please select a keyword first.'); return; }
+
+            const files = this.app.vault.getMarkdownFiles();
+            let filesChanged = 0;
+            let linksRemoved = 0;
+
+            // Match [[target|keyword]] or [[keyword]]
+            const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const pattern = new RegExp(`\\[\\[[^\\]|]*(?:\\|${escaped})?\\]\\]`, 'gi');
+
+            for (const file of files) {
+                const content = await this.app.vault.read(file);
+                const newContent = content.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (match, target, alias) => {
+                    const displayed = alias || target;
+                    if (displayed.toLowerCase() === keyword.toLowerCase()) {
+                        linksRemoved++;
+                        return displayed;
+                    }
+                    return match;
+                });
+
+                if (newContent !== content) {
+                    await this.app.vault.modify(file, newContent);
+                    filesChanged++;
+                }
+            }
+
+            new Notice(`Done — unlinked "${keyword}" in ${filesChanged} file${filesChanged !== 1 ? 's' : ''} (${linksRemoved} link${linksRemoved !== 1 ? 's' : ''} removed).`);
+        });
+
+        // ── Audit ─────────────────────────────────────────────────────────────
+        new Setting(containerEl)
+            .setName('Audit')
+            .setDesc('Inspect your keywords and vault for issues.')
+            .setHeading();
+
+        // 4. Find broken keyword targets
+        new Setting(containerEl)
+            .setName('Find broken keyword targets')
+            .setDesc('Lists keywords whose target note does not exist in the vault.')
+            .addButton(button => button
+                .setButtonText('Run')
+                .onClick(() => {
+                    const files = this.app.vault.getMarkdownFiles();
+                    const fileNames = new Set(files.map(f => f.basename.toLowerCase()));
+
+                    const broken = this.plugin.settings.keywords.filter(kw => {
+                        if (!kw.target || !kw.target.trim()) return false;
+                        const base = kw.target.split('/').pop().replace(/\.md$/, '').toLowerCase();
+                        return !fileNames.has(base);
+                    });
+
+                    if (broken.length === 0) {
+                        new Notice('All keyword targets exist in the vault.');
+                        return;
+                    }
+
+                    const resultsEl = containerEl.querySelector('.akl-broken-targets-results');
+                    if (resultsEl) resultsEl.remove();
+
+                    const results = containerEl.createDiv({ cls: 'akl-tool-results akl-broken-targets-results' });
+                    results.createEl('p', { text: `${broken.length} broken target${broken.length !== 1 ? 's' : ''} found:`, cls: 'akl-tool-results-title' });
+                    const list = results.createEl('ul', { cls: 'akl-help-list' });
+                    broken.forEach(kw => list.createEl('li', { text: `"${kw.keyword}" → "${kw.target}"` }));
+                }));
+
+        // 5. Find unlinked keyword mentions
+        new Setting(containerEl)
+            .setName('Find unlinked keyword mentions')
+            .setDesc('Scans the vault for keywords that appear as plain text but have not been linked yet.')
+            .addButton(button => button
+                .setButtonText('Run')
+                .onClick(async () => {
+                    const files = this.app.vault.getMarkdownFiles();
+                    const keywords = this.plugin.settings.keywords.flatMap(kw =>
+                        [kw.keyword, ...(kw.variations || [])].filter(w => w && w.trim())
+                    );
+
+                    const unlinked = new Map(); // keyword → Set of file basenames
+
+                    for (const file of files) {
+                        const content = await this.app.vault.read(file);
+                        // Strip frontmatter
+                        const body = content.startsWith('---') ? content.replace(/^---[\s\S]*?---\n?/, '') : content;
+
+                        for (const kw of keywords) {
+                            const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                            const boundary = /^\w/.test(kw) ? `\\b${escaped}\\b` : escaped;
+                            const plainPattern = new RegExp(boundary, 'gi');
+                            const linkedPattern = new RegExp(`\\[\\[[^\\]]*\\|${escaped}\\]\\]|\\[\\[${escaped}\\]\\]`, 'gi');
+
+                            const plainMatches = body.match(plainPattern) || [];
+                            const linkedMatches = body.match(linkedPattern) || [];
+
+                            if (plainMatches.length > linkedMatches.length) {
+                                if (!unlinked.has(kw)) unlinked.set(kw, new Set());
+                                unlinked.get(kw).add(file.basename);
+                            }
+                        }
+                    }
+
+                    const prevResults = containerEl.querySelector('.akl-unlinked-results');
+                    if (prevResults) prevResults.remove();
+
+                    const results = containerEl.createDiv({ cls: 'akl-tool-results akl-unlinked-results' });
+
+                    if (unlinked.size === 0) {
+                        results.createEl('p', { text: 'No unlinked keyword mentions found.', cls: 'akl-tool-results-title' });
+                        return;
+                    }
+
+                    results.createEl('p', { text: `${unlinked.size} keyword${unlinked.size !== 1 ? 's' : ''} found with unlinked mentions:`, cls: 'akl-tool-results-title' });
+                    const list = results.createEl('ul', { cls: 'akl-help-list' });
+                    unlinked.forEach((fileSet, kw) => {
+                        const fileList = Array.from(fileSet).join(', ');
+                        list.createEl('li', { text: `"${kw}" — in: ${fileList}` });
+                    });
+                }));
+
+        // 6. Orphaned keywords report
+        new Setting(containerEl)
+            .setName('Orphaned keywords report')
+            .setDesc('Lists keywords that have never been linked anywhere in the vault — candidates for removal.')
+            .addButton(button => button
+                .setButtonText('Run')
+                .onClick(async () => {
+                    const files = this.app.vault.getMarkdownFiles();
+                    const keywords = this.plugin.settings.keywords;
+
+                    // Build a set of all link targets used across the vault
+                    const usedTargets = new Set();
+                    for (const file of files) {
+                        const content = await this.app.vault.read(file);
+                        const matches = content.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g);
+                        for (const m of matches) {
+                            usedTargets.add(m[1].toLowerCase());
+                        }
+                    }
+
+                    const orphaned = keywords.filter(kw => {
+                        if (!kw.target) return false;
+                        return !usedTargets.has(kw.target.toLowerCase()) &&
+                               !usedTargets.has(kw.keyword.toLowerCase());
+                    });
+
+                    const prevResults = containerEl.querySelector('.akl-orphaned-results');
+                    if (prevResults) prevResults.remove();
+
+                    const results = containerEl.createDiv({ cls: 'akl-tool-results akl-orphaned-results' });
+
+                    if (orphaned.length === 0) {
+                        results.createEl('p', { text: 'No orphaned keywords found — all keywords are linked somewhere in the vault.', cls: 'akl-tool-results-title' });
+                        return;
+                    }
+
+                    results.createEl('p', { text: `${orphaned.length} orphaned keyword${orphaned.length !== 1 ? 's' : ''} found:`, cls: 'akl-tool-results-title' });
+                    const list = results.createEl('ul', { cls: 'akl-help-list' });
+                    orphaned.forEach(kw => list.createEl('li', { text: `"${kw.keyword}" → "${kw.target}"` }));
+                }));
+    }
+
+    /**
+     * Display the Help tab
+     */
+    displayHelpTab(containerEl) {
+        new Setting(containerEl)
+            .setName('Auto Keyword Linker — Help')
+            .setDesc('How to use the plugin and where to get support.')
+            .setHeading();
+
+        new Setting(containerEl)
+            .setName('Getting started')
+            .setHeading();
+
+        const introEl = containerEl.createEl('p', { cls: 'akl-help-text' });
+        introEl.setText('Auto Keyword Linker automatically turns keywords in your notes into Obsidian wiki-links. Add a keyword and point it to a target note — every time that word appears in your vault, it will be linked.');
+
+        new Setting(containerEl)
+            .setName('Basic usage')
+            .setHeading();
+
+        const steps = [
+            '1. Go to the Keywords tab and add a keyword along with the note it should link to.',
+            '2. Open any note containing that keyword and run "Link keywords" from the command palette (or enable Auto-link on save in General settings).',
+            '3. The keyword will be wrapped in a wiki-link: [[target|keyword]].',
+            '4. Use variations to catch alternate forms of the same word (e.g. "dogs", "doggo").',
+            '5. Use Groups to apply shared settings across multiple keywords at once.'
+        ];
+
+        const stepsEl = containerEl.createEl('ul', { cls: 'akl-help-list' });
+        steps.forEach(step => stepsEl.createEl('li', { text: step }));
+
+        new Setting(containerEl)
+            .setName('Tips')
+            .setHeading();
+
+        const tips = [
+            'Enable "First occurrence only" to avoid over-linking repeated words in the same note.',
+            'Enable "Skip headings" (General tab) to prevent keywords from being linked inside heading lines — this avoids breaking heading-based anchor links.',
+            'Enable "Prevent self-links" so a note about "dog" does not link the word dog back to itself.',
+            'Use Suggest mode on a keyword to review proposed links before they are applied.',
+            'Use the Tools tab to bulk-remove any links that were previously added inside headings.'
+        ];
+
+        const tipsEl = containerEl.createEl('ul', { cls: 'akl-help-list' });
+        tips.forEach(tip => tipsEl.createEl('li', { text: tip }));
+
+        new Setting(containerEl)
+            .setName('Support & feedback')
+            .setHeading();
+
+        new Setting(containerEl)
+            .setName('Report an issue or request a feature')
+            .setDesc('Found a bug or have an idea? Open an issue on GitHub.')
+            .addButton(button => button
+                .setButtonText('Open GitHub')
+                .onClick(() => {
+                    window.open('https://github.com/danrhodes/AutoKeywordLinker', '_blank');
+                }));
+    }
+
     getAllFolders() {
         const folders = new Set();
 

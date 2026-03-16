@@ -43,6 +43,7 @@ const DEFAULT_SETTINGS = {
     newNoteTemplate: '# {{keyword}}\n\nCreated: {{date}}\n\n',  // Template for new notes
     customStopWords: [],             // Additional stop words to exclude from keyword suggestions (appended to defaults)
     preventSelfLinkGlobal: false,    // Global setting: prevent linking keywords on their target notes
+    skipHeadings: true,              // Skip keyword linking on Markdown heading lines (## Heading)
     statistics: {                    // Statistics tracking
         totalLinksCreated: 0,
         totalNotesProcessed: 0,
