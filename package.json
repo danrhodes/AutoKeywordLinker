@@ -13,6 +13,6 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "esbuild": "0.19.12",
-    "obsidian": "latest"
+    "obsidian": "^1.12.3"
   }
 }

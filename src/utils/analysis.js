@@ -24,6 +24,16 @@ function getStopWords(settings) {
 }
 
 /**
+ * Remove fenced code blocks (``` and ~~~) from text before analysis
+ * @param {string} text - Text to strip code blocks from
+ * @returns {string} Text with code block contents replaced by empty lines
+ */
+function stripFencedCodeBlocks(text) {
+    // Replace ``` and ~~~ fenced blocks (with optional language identifier) with empty string
+    return text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\1\s*$/gm, '');
+}
+
+/**
  * Extract meaningful words from text
  * @param {string} text - Text to extract words from
  * @param {boolean} isTitle - Whether this is a title (affects processing)
@@ -171,6 +181,11 @@ async function analyzeNotesForKeywords(app, settings, getAliasesForNote) {
             // Remove frontmatter
             let contentWithoutFrontmatter = limitedContent.replace(/^---[\s\S]*?---\n/, '');
 
+            // Remove fenced code blocks if setting is enabled
+            if (settings.skipCodeBlocks) {
+                contentWithoutFrontmatter = stripFencedCodeBlocks(contentWithoutFrontmatter);
+            }
+
             // Remove all wikilinks [[link]] and [[link|alias]] - they're already keywords or shouldn't be suggested
             contentWithoutFrontmatter = contentWithoutFrontmatter.replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '');
 
@@ -313,6 +328,11 @@ async function analyzeCurrentNoteForKeywords(app, settings, file, getAliasesForN
 
         // Remove frontmatter
         let contentWithoutFrontmatter = content.replace(/^---[\s\S]*?---\n/, '');
+
+        // Remove fenced code blocks if setting is enabled
+        if (settings.skipCodeBlocks) {
+            contentWithoutFrontmatter = stripFencedCodeBlocks(contentWithoutFrontmatter);
+        }
 
         // Remove all wikilinks [[link]] and [[link|alias]] - they're already keywords or shouldn't be suggested
         contentWithoutFrontmatter = contentWithoutFrontmatter.replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '');

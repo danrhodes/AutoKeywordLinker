@@ -31,6 +31,18 @@ async function loadSettings(plugin) {
         settings.keywordGroups = [];
     }
 
+    // Ensure skipCodeBlocks exists in each group's settings (migration for existing groups)
+    for (let group of settings.keywordGroups) {
+        if (group.settings && group.settings.skipCodeBlocks === undefined) {
+            group.settings.skipCodeBlocks = false;
+        }
+    }
+
+    // Ensure skipCodeBlocks exists (migration for existing users)
+    if (settings.skipCodeBlocks === undefined) {
+        settings.skipCodeBlocks = DEFAULT_SETTINGS.skipCodeBlocks;
+    }
+
     // Ensure enableTags, linkScope, id, and groupId fields exist for all keywords
     if (settings.keywords) {
         for (let keyword of settings.keywords) {
@@ -83,6 +95,12 @@ async function loadSettings(plugin) {
             }
             if (keyword.groupId && keyword.useRelativeLinks === false) {
                 keyword.useRelativeLinks = null;
+            }
+            if (keyword.skipCodeBlocks === undefined) {
+                keyword.skipCodeBlocks = null;
+            }
+            if (keyword.groupId && keyword.skipCodeBlocks === false) {
+                keyword.skipCodeBlocks = null;
             }
         }
     }

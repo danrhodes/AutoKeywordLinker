@@ -269,7 +269,8 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     requireTag: '',
                     onlyInNotesLinkingTo: false,
                     suggestMode: false,
-                    preventSelfLink: false
+                    preventSelfLink: false,
+                    skipCodeBlocks: false
                 }
             });
             // Re-render the display to show new entry
@@ -328,6 +329,17 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.skipHeadings)
                 .onChange(async (value) => {
                     this.plugin.settings.skipHeadings = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        // Skip code blocks toggle (global)
+        new Setting(containerEl)
+            .setName('Skip code blocks')
+            .setDesc('Prevent keywords from being linked or suggested inside fenced code blocks (``` or ~~~). Can be overridden per keyword or per group.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.skipCodeBlocks || false)
+                .onChange(async (value) => {
+                    this.plugin.settings.skipCodeBlocks = value;
                     await this.plugin.saveSettings();
                 }));
 
@@ -988,6 +1000,33 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 preventSelfLinkSetting.settingEl.addClass('akl-disabled-setting');
             }
 
+            // Skip code blocks toggle (per-keyword)
+            const skipCodeBlocksSetting = new Setting(cardBody)
+                .setName('Skip code blocks')
+                .setDesc(isInGroup
+                    ? `Inherited from group "${groupName}"`
+                    : 'Prevent this keyword from being linked or suggested inside fenced code blocks. "Inherit" uses the global setting.')
+                .addDropdown(dropdown => {
+                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
+                    // null = inherit global, true = always skip, false = never skip (override global)
+                    const currentVal = isInGroup ? String(effectiveSettings.skipCodeBlocks || false) : String(item.skipCodeBlocks);
+                    dropdown
+                        .addOption('null', 'Inherit global setting')
+                        .addOption('true', 'Always skip code blocks')
+                        .addOption('false', 'Never skip code blocks')
+                        .setValue(currentVal === 'null' || currentVal === 'undefined' ? 'null' : currentVal)
+                        .setDisabled(isInGroup)
+                        .onChange(async (value) => {
+                            if (!isInGroup) {
+                                this.plugin.settings.keywords[i].skipCodeBlocks = value === 'null' ? null : value === 'true';
+                                await this.plugin.saveSettings();
+                            }
+                        });
+                });
+            if (isInGroup) {
+                skipCodeBlocksSetting.settingEl.addClass('akl-disabled-setting');
+            }
+
             // Link Scope dropdown
             const linkScopeSetting = new Setting(cardBody)
                 .setName('Link scope')
@@ -1285,6 +1324,17 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     .setValue(group.settings.preventSelfLink || false)
                     .onChange(async (value) => {
                         group.settings.preventSelfLink = value;
+                        await this.plugin.saveSettings();
+                    }));
+
+            // Skip code blocks toggle
+            new Setting(settingsSection)
+                .setName('Skip code blocks')
+                .setDesc('Prevent keywords in this group from being linked or suggested inside fenced code blocks (``` or ~~~)')
+                .addToggle(toggle => toggle
+                    .setValue(group.settings.skipCodeBlocks || false)
+                    .onChange(async (value) => {
+                        group.settings.skipCodeBlocks = value;
                         await this.plugin.saveSettings();
                     }));
         }

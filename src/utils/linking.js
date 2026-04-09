@@ -22,7 +22,8 @@ function getEffectiveKeywordSettings(settings, keyword) {
         requireTag: '',
         onlyInNotesLinkingTo: false,
         suggestMode: false,
-        preventSelfLink: false
+        preventSelfLink: false,
+        skipCodeBlocks: null
     };
 
     // If keyword is in a group, use group settings (no keyword-level overrides allowed)
@@ -46,6 +47,7 @@ function getEffectiveKeywordSettings(settings, keyword) {
     if (keyword.onlyInNotesLinkingTo !== null && keyword.onlyInNotesLinkingTo !== undefined) effectiveSettings.onlyInNotesLinkingTo = keyword.onlyInNotesLinkingTo;
     if (keyword.suggestMode !== null && keyword.suggestMode !== undefined) effectiveSettings.suggestMode = keyword.suggestMode;
     if (keyword.preventSelfLink !== null && keyword.preventSelfLink !== undefined) effectiveSettings.preventSelfLink = keyword.preventSelfLink;
+    if (keyword.skipCodeBlocks !== null && keyword.skipCodeBlocks !== undefined) effectiveSettings.skipCodeBlocks = keyword.skipCodeBlocks;
 
     return effectiveSettings;
 }
@@ -67,8 +69,7 @@ function buildKeywordMap(app, settings) {
 
         // Check if we've already seen this keyword (case-insensitive)
         if (seenKeywords.has(lowerKey)) {
-            // Skip duplicate - first one wins
-            console.warn(`Auto Keyword Linker: Skipping duplicate keyword "${keywordText}" (already have "${seenKeywords.get(lowerKey)}")`);
+            // Skip duplicate - first one wins (silent, duplicates are a user data issue)
             return false;
         }
 
