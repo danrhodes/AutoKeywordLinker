@@ -26,7 +26,14 @@ async function linkKeywordsInCurrentNote(app, settings, linkKeywordsInFile, save
     }
 
     // Process the file and get results
-    const results = await linkKeywordsInFile(activeFile, preview);
+    let results;
+    try {
+        results = await linkKeywordsInFile(activeFile, preview);
+    } catch (err) {
+        console.error('Auto Keyword Linker: Error linking keywords in current note:', err);
+        new Notice(`Error linking keywords: ${err.message}`);
+        return;
+    }
 
     // If preview mode and we have results, show preview modal
     if (preview && results) {
@@ -77,7 +84,13 @@ async function linkKeywordsInAllNotes(app, settings, linkKeywordsInFile, saveSet
             continue;
         }
 
-        const results = await linkKeywordsInFile(file, preview);
+        let results;
+        try {
+            results = await linkKeywordsInFile(file, preview);
+        } catch (err) {
+            console.error(`Auto Keyword Linker: Error processing ${file.path}:`, err);
+            continue;
+        }
 
         // If changes were made to this file
         if (results && results.changed) {

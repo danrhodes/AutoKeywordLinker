@@ -1,6 +1,6 @@
 const { MarkdownView } = require('obsidian');
 const { escapeRegex, getContext } = require('../utils/helpers');
-const { getFrontmatterBounds, isInsideAlias, isPartOfUrl, isInsideLinkOrCode, isInsideBlockReference, isInsideTable, isInsideMath, isInsideHeading } = require('../utils/detection');
+const { getFrontmatterBounds, isInsideAlias, isPartOfUrl, isInsideLinkOrCode, isInsideBlockReference, isInsideTable, isInsideMath, isInsideHeading, isInsideFencedCodeBlock } = require('../utils/detection');
 const { getEffectiveKeywordSettings, buildKeywordMap, checkLinkScope } = require('../utils/linking');
 const { findTargetFile, getAliasesForNote, noteHasTag, noteHasLinkToTarget, ensureNoteExists } = require('../utils/noteManagement');
 const { sanitizeTagName, addTagsToContent, addTagToTargetNote } = require('../utils/tagManagement');
@@ -59,6 +59,11 @@ class KeywordLinker {
             const suggestMode = keywordMap[keyword].suggestMode || false;
             const preventSelfLink = keywordMap[keyword].preventSelfLink || false;
             const keywordIndex = keywordMap[keyword].keywordIndex;
+            // Per-keyword skipCodeBlocks: null means inherit global, true/false overrides
+            const perKeywordSkip = keywordMap[keyword].skipCodeBlocks;
+            const skipCodeBlocks = perKeywordSkip !== null && perKeywordSkip !== undefined
+                ? perKeywordSkip
+                : (this.settings.skipCodeBlocks || false);
 
             // Skip empty keywords or targets
             if (!keyword.trim() || !target || !target.trim()) continue;
@@ -110,6 +115,11 @@ class KeywordLinker {
 
                 // Skip if on a heading line (e.g. ## My Heading)
                 if (this.settings.skipHeadings && isInsideHeading(content, matchIndex)) {
+                    continue;
+                }
+
+                // Skip if inside a fenced code block (``` or ~~~)
+                if (skipCodeBlocks && isInsideFencedCodeBlock(content, matchIndex)) {
                     continue;
                 }
 

@@ -273,8 +273,16 @@ async function ensureNoteExists(app, settings, noteName) {
         }
     }
 
-    // Create the new note
-    await app.vault.create(path, content);
+    // Create the new note — guard against race condition where another
+    // concurrent call already created it between our existence check and here
+    try {
+        await app.vault.create(path, content);
+    } catch (err) {
+        if (!err.message || !err.message.includes('File already exists')) {
+            throw err;
+        }
+        // Another concurrent call beat us to it — that's fine, note now exists
+    }
 }
 
 /**

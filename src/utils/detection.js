@@ -463,6 +463,50 @@ function isInsideTable(content, index) {
 }
 
 /**
+ * Check if a position is inside a fenced code block (``` or ~~~)
+ * Handles both ``` and ~~~ style fences, with optional language identifiers
+ * @param {string} content - The full content
+ * @param {number} index - Position to check
+ * @returns {boolean} True if inside a fenced code block
+ */
+function isInsideFencedCodeBlock(content, index) {
+    const lines = content.split('\n');
+    let charPos = 0;
+    let insideFence = false;
+    let fenceChar = null; // '`' or '~'
+
+    for (let i = 0; i < lines.length; i++) {
+        const lineEnd = charPos + lines[i].length;
+
+        // Check if our target index is on this line
+        const targetOnThisLine = index >= charPos && index <= lineEnd;
+
+        // Detect fence open/close: line starts with ``` or ~~~
+        const fenceMatch = lines[i].match(/^(`{3,}|~{3,})/);
+        if (fenceMatch) {
+            const thisFenceChar = fenceMatch[1][0];
+            if (!insideFence) {
+                // If our index is on the fence opening line itself, not inside content
+                if (targetOnThisLine) return false;
+                insideFence = true;
+                fenceChar = thisFenceChar;
+            } else if (thisFenceChar === fenceChar) {
+                // Closing fence
+                if (targetOnThisLine) return false;
+                insideFence = false;
+                fenceChar = null;
+            }
+        } else if (targetOnThisLine) {
+            return insideFence;
+        }
+
+        charPos = lineEnd + 1; // +1 for the newline
+    }
+
+    return insideFence;
+}
+
+/**
  * Check if a position is on a Markdown heading line (lines starting with one or more #)
  * @param {string} content - The full content
  * @param {number} index - Position to check
@@ -491,5 +535,6 @@ module.exports = {
     isInsideBlockReference,
     isInsideTable,
     isInsideMath,
-    isInsideHeading
+    isInsideHeading,
+    isInsideFencedCodeBlock
 };

@@ -44,6 +44,7 @@ const DEFAULT_SETTINGS = {
     customStopWords: [],             // Additional stop words to exclude from keyword suggestions (appended to defaults)
     preventSelfLinkGlobal: false,    // Global setting: prevent linking keywords on their target notes
     skipHeadings: true,              // Skip keyword linking on Markdown heading lines (## Heading)
+    skipCodeBlocks: false,           // Skip keyword linking and suggestions inside fenced code blocks (``` or ~~~)
     statistics: {                    // Statistics tracking
         totalLinksCreated: 0,
         totalNotesProcessed: 0,
