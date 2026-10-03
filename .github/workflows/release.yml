@@ -113,21 +113,29 @@ jobs:
         run: |
           # Determine the commit range based on release type
           if [ "${{ steps.release_type.outputs.type }}" == "full" ]; then
-            LAST_TAG=$(git describe --tags --abbrev=0 --match="[0-9]*.[0-9]*.[0-9]*" 2>/dev/null || echo "")
+            # Full release: everything since the previous FULL release, so the notes combine
+            # all pre-releases in between. --exclude is needed because "*" in --match also
+            # matches "-", so pre-release tags (3.3.0-pre-release.2-abc1234) would otherwise match.
+            LAST_TAG=$(git describe --tags --abbrev=0 --match="[0-9]*.[0-9]*.[0-9]*" --exclude="*-*" 2>/dev/null || echo "")
             if [ -z "$LAST_TAG" ]; then
               COMMITS=$(git log --pretty=format:"- %s (%h)")
             else
               COMMITS=$(git log --pretty=format:"- %s (%h)" "${LAST_TAG}..HEAD")
             fi
           else
-            LAST_PRERELEASE=$(git describe --tags --abbrev=0 --match="*-pre-release.*" 2>/dev/null || echo "")
-            if [ -z "$LAST_PRERELEASE" ]; then
-              # No previous pre-release, just get the last commit
+            # Pre-release: everything since the most recent tag of either kind, so the first
+            # pre-release after a full release doesn't repeat what that release already shipped
+            LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -z "$LAST_TAG" ]; then
+              # No previous tag, just get the last commit
               COMMITS=$(git log -1 --pretty=format:"- %s (%h)")
             else
-              COMMITS=$(git log --pretty=format:"- %s (%h)" "${LAST_PRERELEASE}..HEAD")
+              COMMITS=$(git log --pretty=format:"- %s (%h)" "${LAST_TAG}..HEAD")
             fi
           fi
+
+          # Drop the bot's own "Release version x.y.z" commits - they aren't changes
+          COMMITS=$(echo "$COMMITS" | grep -vE "^- Release version [0-9]" || true)
 
           # Debug: show what commits were found
           echo "=== Debug: Commits found ==="
