@@ -1,9 +1,10 @@
 const { MarkdownView } = require('obsidian');
 const { escapeRegex, getContext } = require('../utils/helpers');
-const { getFrontmatterBounds, isInsideAlias, isPartOfUrl, isInsideLinkOrCode, isInsideBlockReference, isInsideTable, isInsideMath, isInsideHeading, isInsideFencedCodeBlock } = require('../utils/detection');
+const { getFrontmatterBounds, getSuggestionSpanRanges, contentLinksToTarget, isInsideAlias, isPartOfUrl, isInsideLinkOrCode, isInsideBlockReference, isInsideTable, isInsideMath, isInsideHeading, isInsideFencedCodeBlock } = require('../utils/detection');
 const { getEffectiveKeywordSettings, buildKeywordMap, checkLinkScope } = require('../utils/linking');
 const { findTargetFile, getAliasesForNote, noteHasTag, noteHasLinkToTarget, ensureNoteExists } = require('../utils/noteManagement');
 const { sanitizeTagName, addTagsToContent, addTagToTargetNote } = require('../utils/tagManagement');
+const { getIgnoreList, isIgnored } = require('../utils/ignore');
 
 class KeywordLinker {
     constructor(app, settings) {
@@ -34,147 +35,180 @@ class KeywordLinker {
         let tagsToAdd = new Set();
         let targetNotesForTags = new Map();
 
+        // Per-note opt-outs from the akl-ignore frontmatter property
+        const ignoreList = getIgnoreList(content);
+
         // Build a map of all keywords to their target notes
-        const keywordMap = buildKeywordMap(this.app, this.settings);
+        // (akl-ignore: all leaves the map empty, so nothing is linked in this note)
+        const keywordMap = ignoreList.all ? {} : buildKeywordMap(this.app, this.settings);
 
-        // Sort keywords by length (longest first)
-        const sortedKeywords = Object.keys(keywordMap).sort((a, b) => b.length - a.length);
+        // Group keywords (including variations and aliases) by target note, so each target
+        // is handled once - otherwise every variation/alias could add its own link to the same note
+        const targetGroups = new Map(); // lowercase target -> { target, keywords: [] }
+        for (const keyword of Object.keys(keywordMap)) {
+            const target = keywordMap[keyword].target;
+            if (!keyword.trim() || !target || !target.trim()) continue;
+            // Skip keywords whose target or own text is in this note's ignore list
+            if (isIgnored(ignoreList, target) || isIgnored(ignoreList, keyword)) continue;
+            const key = target.toLowerCase();
+            if (!targetGroups.has(key)) {
+                targetGroups.set(key, { target, keywords: [] });
+            }
+            targetGroups.get(key).keywords.push(keyword);
+        }
 
-        // Track found keywords for firstOccurrenceOnly mode
-        const foundKeywords = new Set();
+        // Longest keywords first, so longer phrases claim text before shorter overlapping ones
+        const groups = Array.from(targetGroups.values());
+        groups.forEach(group => group.keywords.sort((a, b) => b.length - a.length));
+        groups.sort((a, b) => b.keywords[0].length - a.keywords[0].length);
 
         // Track all replacements made (for cursor position adjustment)
         const allReplacements = [];
 
-        // Process each keyword
-        for (let keyword of sortedKeywords) {
-            const target = keywordMap[keyword].target;
-            const enableTags = keywordMap[keyword].enableTags;
-            const linkScope = keywordMap[keyword].linkScope || 'vault-wide';
-            const scopeFolder = keywordMap[keyword].scopeFolder || '';
-            const useRelativeLinks = keywordMap[keyword].useRelativeLinks || false;
-            const blockRef = keywordMap[keyword].blockRef || '';
-            const requireTag = keywordMap[keyword].requireTag || '';
-            const onlyInNotesLinkingTo = keywordMap[keyword].onlyInNotesLinkingTo || false;
-            const suggestMode = keywordMap[keyword].suggestMode || false;
-            const preventSelfLink = keywordMap[keyword].preventSelfLink || false;
-            const keywordIndex = keywordMap[keyword].keywordIndex;
-            // Per-keyword skipCodeBlocks: null means inherit global, true/false overrides
-            const perKeywordSkip = keywordMap[keyword].skipCodeBlocks;
-            const skipCodeBlocks = perKeywordSkip !== null && perKeywordSkip !== undefined
-                ? perKeywordSkip
-                : (this.settings.skipCodeBlocks || false);
+        // Process each target note
+        for (const group of groups) {
+            const target = group.target;
 
-            // Skip empty keywords or targets
-            if (!keyword.trim() || !target || !target.trim()) continue;
+            // For firstOccurrenceOnly, leave the note alone if it already links to (or suggests) this target
+            if (this.settings.firstOccurrenceOnly && contentLinksToTarget(content, target)) {
+                continue;
+            }
 
-            // Check self-link protection - skip if we're on the target note itself
-            // Use global setting OR per-keyword setting
-            if (this.settings.preventSelfLinkGlobal || preventSelfLink) {
-                const currentFileBase = file.basename;
-                const targetBase = target.split('/').pop();
-                if (currentFileBase === targetBase) {
+            // Never match inside an existing suggestion span (its HTML attributes or text)
+            const spanRanges = getSuggestionSpanRanges(content);
+
+            // Collect valid matches for every keyword form that points at this target
+            const candidates = [];
+
+            for (const keyword of group.keywords) {
+                const keywordSettings = keywordMap[keyword];
+                const linkScope = keywordSettings.linkScope || 'vault-wide';
+                const scopeFolder = keywordSettings.scopeFolder || '';
+                const requireTag = keywordSettings.requireTag || '';
+                const onlyInNotesLinkingTo = keywordSettings.onlyInNotesLinkingTo || false;
+                const preventSelfLink = keywordSettings.preventSelfLink || false;
+                // Per-keyword skipCodeBlocks: null means inherit global, true/false overrides
+                const perKeywordSkip = keywordSettings.skipCodeBlocks;
+                const skipCodeBlocks = perKeywordSkip !== null && perKeywordSkip !== undefined
+                    ? perKeywordSkip
+                    : (this.settings.skipCodeBlocks || false);
+
+                // Check self-link protection - skip if we're on the target note itself
+                // Use global setting OR per-keyword setting
+                if (this.settings.preventSelfLinkGlobal || preventSelfLink) {
+                    const currentFileBase = file.basename;
+                    const targetBase = target.split('/').pop();
+                    if (currentFileBase === targetBase) {
+                        continue;
+                    }
+                }
+
+                // Check if we should only link in notes that already link to target
+                if (onlyInNotesLinkingTo && !noteHasLinkToTarget(this.app, file, target)) {
                     continue;
+                }
+
+                // Check if target note has required tag
+                if (!noteHasTag(this.app, target, requireTag)) {
+                    continue;
+                }
+
+                // Check link scope
+                if (!checkLinkScope(this.app, file, target, linkScope, scopeFolder, findTargetFile)) {
+                    continue;
+                }
+
+                // Case sensitivity is resolved per keyword (keyword/group override or global)
+                const flags = keywordSettings.caseSensitive ? 'g' : 'gi';
+                const escapedKeyword = escapeRegex(keyword);
+                const startBoundary = /^\w/.test(keyword) ? '\\b' : '(?<![\\w])';
+                const endBoundary = /\w$/.test(keyword) ? '\\b' : '(?![\\w])';
+                const pattern = new RegExp(`${startBoundary}${escapedKeyword}${endBoundary}`, flags);
+
+                let match;
+
+                // Find all potential matches
+                while ((match = pattern.exec(content)) !== null) {
+                    const matchIndex = match.index;
+                    const matchText = match[0];
+
+                    // CRITICAL: Skip if inside frontmatter
+                    if (frontmatterBounds && matchIndex >= frontmatterBounds.start && matchIndex < frontmatterBounds.end) {
+                        continue;
+                    }
+
+                    // Skip if inside an existing suggestion span
+                    if (spanRanges.some(r => matchIndex >= r.start && matchIndex < r.end)) {
+                        continue;
+                    }
+
+                    // Skip if on a heading line (e.g. ## My Heading)
+                    if (this.settings.skipHeadings && isInsideHeading(content, matchIndex)) {
+                        continue;
+                    }
+
+                    // Skip if inside a fenced code block (``` or ~~~)
+                    if (skipCodeBlocks && isInsideFencedCodeBlock(content, matchIndex)) {
+                        continue;
+                    }
+
+                    // Skip if preceded by # (hashtag)
+                    if (matchIndex > 0 && content[matchIndex - 1] === '#') {
+                        continue;
+                    }
+
+                    // Skip if inside a block reference
+                    if (isInsideBlockReference(content, matchIndex)) {
+                        continue;
+                    }
+
+                    // Check if inside a link or code block
+                    if (isInsideLinkOrCode(content, matchIndex)) {
+                        continue;
+                    }
+
+                    // Check if inside an alias portion of a link
+                    if (isInsideAlias(content, matchIndex)) {
+                        continue;
+                    }
+
+                    // Check if part of a URL
+                    if (isPartOfUrl(content, matchIndex, matchText.length)) {
+                        continue;
+                    }
+
+                    // Skip if inside a LaTeX math formula
+                    if (isInsideMath(content, matchIndex)) {
+                        continue;
+                    }
+
+                    candidates.push({ index: matchIndex, matchText, keyword, keywordSettings });
                 }
             }
 
-            // Check if we should only link in notes that already link to target
-            if (onlyInNotesLinkingTo && !noteHasLinkToTarget(this.app, file, target)) {
-                continue;
+            if (candidates.length === 0) continue;
+
+            // Order by position (longer match first at the same position) and drop overlaps,
+            // e.g. "dark matter" and "matter" matching the same text
+            candidates.sort((a, b) => a.index - b.index || b.matchText.length - a.matchText.length);
+            const selected = [];
+            let lastEnd = -1;
+            for (const candidate of candidates) {
+                if (candidate.index < lastEnd) continue;
+                selected.push(candidate);
+                lastEnd = candidate.index + candidate.matchText.length;
+                // For firstOccurrenceOnly, link only the earliest mention of any form of this target
+                if (this.settings.firstOccurrenceOnly) break;
             }
 
-            // Check if target note has required tag
-            if (!noteHasTag(this.app, target, requireTag)) {
-                continue;
-            }
-
-            // Check link scope
-            if (!checkLinkScope(this.app, file, target, linkScope, scopeFolder, findTargetFile)) {
-                continue;
-            }
-
-            const flags = this.settings.caseSensitive ? 'g' : 'gi';
-            const escapedKeyword = escapeRegex(keyword);
-            const startBoundary = /^\w/.test(keyword) ? '\\b' : '(?<![\\w])';
-            const endBoundary = /\w$/.test(keyword) ? '\\b' : '(?![\\w])';
-            const pattern = new RegExp(`${startBoundary}${escapedKeyword}${endBoundary}`, flags);
-
-            let match;
             const replacements = [];
-            let keywordFoundInThisFile = false;
 
-            // Find all potential matches
-            while ((match = pattern.exec(content)) !== null) {
-                const matchIndex = match.index;
-                const matchText = match[0];
-
-                // CRITICAL: Skip if inside frontmatter
-                if (frontmatterBounds && matchIndex >= frontmatterBounds.start && matchIndex < frontmatterBounds.end) {
-                    continue;
-                }
-
-                // Skip if on a heading line (e.g. ## My Heading)
-                if (this.settings.skipHeadings && isInsideHeading(content, matchIndex)) {
-                    continue;
-                }
-
-                // Skip if inside a fenced code block (``` or ~~~)
-                if (skipCodeBlocks && isInsideFencedCodeBlock(content, matchIndex)) {
-                    continue;
-                }
-
-                // Skip if preceded by # (hashtag)
-                if (matchIndex > 0 && content[matchIndex - 1] === '#') {
-                    continue;
-                }
-
-                // Skip if inside a block reference
-                if (isInsideBlockReference(content, matchIndex)) {
-                    continue;
-                }
-
-                // Check if inside a link or code block
-                if (isInsideLinkOrCode(content, matchIndex)) {
-                    continue;
-                }
-
-                // Check if inside an alias portion of a link
-                if (isInsideAlias(content, matchIndex)) {
-                    continue;
-                }
-
-                // Check if part of a URL
-                if (isPartOfUrl(content, matchIndex, matchText.length)) {
-                    continue;
-                }
-
-                // Skip if inside a LaTeX math formula
-                if (isInsideMath(content, matchIndex)) {
-                    continue;
-                }
-
-                // For firstOccurrenceOnly, skip if we already found this keyword
-                if (this.settings.firstOccurrenceOnly) {
-                    const keyLower = keyword.toLowerCase();
-
-                    if (foundKeywords.has(keyLower)) {
-                        break;
-                    }
-
-                    const existingLinkPattern = this.settings.caseSensitive
-                        ? new RegExp(`\\[\\[([^\\]]+\\|)?${escapeRegex(keyword)}\\]\\]`)
-                        : new RegExp(`\\[\\[([^\\]]+\\|)?${escapeRegex(keyword)}\\]\\]`, 'i');
-
-                    const existingSuggestPattern = this.settings.caseSensitive
-                        ? new RegExp(`<span class="akl-suggested-link"[^>]*>${escapeRegex(keyword)}</span>`)
-                        : new RegExp(`<span class="akl-suggested-link"[^>]*>${escapeRegex(keyword)}</span>`, 'i');
-
-                    if (existingLinkPattern.test(content) || existingSuggestPattern.test(content)) {
-                        break;
-                    }
-
-                    foundKeywords.add(keyLower);
-                }
+            for (const { index: matchIndex, matchText, keyword, keywordSettings } of selected) {
+                const enableTags = keywordSettings.enableTags;
+                const useRelativeLinks = keywordSettings.useRelativeLinks || false;
+                const blockRef = keywordSettings.blockRef || '';
+                const suggestMode = keywordSettings.suggestMode || false;
+                const keywordIndex = keywordSettings.keywordIndex;
 
                 // Check if we're inside a table
                 const insideTable = isInsideTable(content, matchIndex);
@@ -218,20 +252,14 @@ class KeywordLinker {
                     context: getContext(content, matchIndex)
                 });
 
-                keywordFoundInThisFile = true;
+                // If tags are enabled, prepare to add tags
+                if (enableTags) {
+                    const tagName = sanitizeTagName(keyword);
+                    tagsToAdd.add(tagName);
 
-                if (this.settings.firstOccurrenceOnly) {
-                    break;
-                }
-            }
-
-            // If keyword was found and tags are enabled, prepare to add tags
-            if (keywordFoundInThisFile && enableTags) {
-                const tagName = sanitizeTagName(keyword);
-                tagsToAdd.add(tagName);
-
-                if (target !== file.basename) {
-                    targetNotesForTags.set(target, tagName);
+                    if (target !== file.basename) {
+                        targetNotesForTags.set(target, tagName);
+                    }
                 }
             }
 

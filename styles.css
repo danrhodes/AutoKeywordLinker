@@ -898,6 +898,127 @@
     width: 100%;
 }
 
+/* Keywords tab: compact list, sort/filter row and bulk actions */
+.akl-view-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5em;
+    margin-bottom: 0.75em;
+}
+
+.akl-accordion-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.3em;
+    color: var(--text-muted);
+    font-size: 0.9em;
+    cursor: pointer;
+}
+
+.akl-bulk-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5em;
+    padding: 0.4em 0.75em;
+    margin-bottom: 0.5em;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--background-primary);
+}
+
+.akl-bulk-bar-active {
+    border-color: var(--interactive-accent);
+    background: var(--background-secondary);
+}
+
+.akl-bulk-select-all {
+    display: flex;
+    align-items: center;
+    gap: 0.3em;
+    margin-right: auto;
+    cursor: pointer;
+}
+
+.akl-keywords-container {
+    gap: 0.35em;
+}
+
+.akl-keywords-container .akl-card-header {
+    padding: 0.45em 0.75em;
+    gap: 0.5em;
+    border-bottom: none;
+}
+
+.akl-keywords-container .akl-card-expanded .akl-card-header {
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.akl-keywords-container .akl-keyword-card {
+    border-radius: 6px;
+}
+
+.akl-keywords-container .akl-keyword-name {
+    font-size: 1em;
+}
+
+.akl-keywords-container .akl-card-body .setting-item {
+    padding: 0.5em 0;
+}
+
+.akl-card-select {
+    flex-shrink: 0;
+    margin: 0;
+    cursor: pointer;
+}
+
+.akl-card-selected {
+    border-color: var(--interactive-accent);
+}
+
+/* Group assign modal (multi-select) */
+.akl-group-assign-modal {
+    width: 520px;
+}
+
+.akl-group-assign-modal .akl-modal-title {
+    margin: 0 0 1em 0;
+}
+
+.akl-assign-bulk-row {
+    display: flex;
+    gap: 0.5em;
+    margin: 0.75em 0;
+}
+
+.akl-assign-list {
+    max-height: 50vh;
+    overflow-y: auto;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 0.25em 0;
+}
+
+.akl-assign-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    padding: 0.35em 0.75em;
+    cursor: pointer;
+}
+
+.akl-assign-row:hover {
+    background: var(--background-modifier-hover);
+}
+
+.akl-assign-row .akl-badge {
+    margin-left: auto;
+}
+
 /* Highlight card animation (for scroll-to feature) */
 .akl-highlight-card {
     border-color: var(--interactive-accent) !important;

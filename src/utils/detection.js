@@ -527,7 +527,56 @@ function isInsideHeading(content, index) {
     return i > lineStart && i < content.length && content[i] === ' ';
 }
 
+/**
+ * Get the ranges of all existing suggestion spans (opening tag, text and closing tag)
+ * Matches must never fall inside these, or the span's HTML gets corrupted by nested replacements
+ * @param {string} content - The full content
+ * @returns {Array<{start: number, end: number}>} Ranges of suggestion spans
+ */
+function getSuggestionSpanRanges(content) {
+    const ranges = [];
+    const spanPattern = /<span class="akl-suggested-link"[^>]*>[\s\S]*?<\/span>/g;
+    let match;
+    while ((match = spanPattern.exec(content)) !== null) {
+        ranges.push({ start: match.index, end: match.index + match[0].length });
+    }
+    return ranges;
+}
+
+/**
+ * Check if content (outside frontmatter) already links to, or suggests a link to, a target note
+ * Recognises [[target]], [[path/target#heading|alias]], [text](target.md) and suggestion spans
+ * @param {string} content - The note content
+ * @param {string} target - Target note name or path
+ * @returns {boolean} True if the target is already linked or suggested
+ */
+function contentLinksToTarget(content, target) {
+    const bounds = getFrontmatterBounds(content);
+    const body = bounds ? content.substring(bounds.end) : content;
+
+    const targetPath = target.replace(/\.md$/i, '');
+    const targetBase = targetPath.split('/').pop();
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const wikiPattern = new RegExp(
+        `\\[\\[(?:${esc(targetPath)}|(?:[^\\]|#]*/)?${esc(targetBase)})(?:\\.md)?(?:#[^\\]|]*)?(?:\\\\?\\|[^\\]]*)?\\]\\]`,
+        'i'
+    );
+    const markdownPattern = new RegExp(
+        `\\]\\((?:[^)]*/)?(?:${esc(encodeURIComponent(targetPath))}|${esc(encodeURIComponent(targetBase))}|${esc(targetBase)})\\.md(?:#[^)]*)?\\)`,
+        'i'
+    );
+    const suggestionPattern = new RegExp(
+        `<span class="akl-suggested-link" data-target="${esc(target.replace(/"/g, '&quot;'))}"`,
+        'i'
+    );
+
+    return wikiPattern.test(body) || markdownPattern.test(body) || suggestionPattern.test(body);
+}
+
 module.exports = {
+    getSuggestionSpanRanges,
+    contentLinksToTarget,
     getFrontmatterBounds,
     isInsideAlias,
     isPartOfUrl,

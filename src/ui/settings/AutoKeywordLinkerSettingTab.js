@@ -18,6 +18,8 @@ const NoteSuggest = require('../suggests/NoteSuggest');
 
 // Import utility functions
 const { generateId } = require('../../utils/helpers');
+const { isKeywordCaseSensitive, keywordTextsConflict } = require('../../utils/linking');
+const { assignKeywordToGroup } = require('../../utils/groups');
 
 class AutoKeywordLinkerSettingTab extends PluginSettingTab {
     /**
@@ -28,29 +30,30 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         super(app, plugin);
         this.plugin = plugin;
         this.searchFilter = ''; // Track current search term
+        this.groupFilter = 'all'; // Keywords tab group filter: 'all', 'none' or a group ID
+        this.selectedKeywordIds = new Set(); // Keywords ticked for bulk actions
+        this.visibleKeywordIds = []; // Keyword IDs currently shown (after search/filter)
         this.currentTab = 'keywords'; // Track which tab is active: 'keywords', 'groups', 'general', 'import-export', 'tools', 'help'
     }
 
     /**
-     * Check if a keyword already exists (case-insensitive)
+     * Check if a keyword already exists
+     * Texts differing only in case conflict unless both keywords match case-sensitively
      * @param {string} keyword - The keyword to check
      * @param {string} excludeId - Optional ID to exclude (for editing existing keywords)
+     * @param {boolean} caseSensitive - Whether the keyword being checked matches case-sensitively
      * @returns {Object|null} The existing keyword object if duplicate found, null otherwise
      */
-    isDuplicateKeyword(keyword, excludeId = null) {
+    isDuplicateKeyword(keyword, excludeId = null, caseSensitive = !!this.plugin.settings.caseSensitive) {
         if (!keyword || !keyword.trim()) return null;
-        const lowerKeyword = keyword.toLowerCase().trim();
 
         for (const kw of this.plugin.settings.keywords) {
             if (excludeId && kw.id === excludeId) continue;
+            const kwCaseSensitive = isKeywordCaseSensitive(this.plugin.settings, kw);
 
-            // Check main keyword
-            if (kw.keyword && kw.keyword.toLowerCase().trim() === lowerKeyword) {
-                return kw;
-            }
-
-            // Check variations
-            if (kw.variations && kw.variations.some(v => v.toLowerCase().trim() === lowerKeyword)) {
+            // Check main keyword and variations
+            const texts = [kw.keyword, ...(kw.variations || [])];
+            if (texts.some(t => keywordTextsConflict(keyword, caseSensitive, t, kwCaseSensitive))) {
                 return kw;
             }
         }
@@ -63,6 +66,11 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
      */
     display() {
         const {containerEl} = this;
+
+        // Remember scroll position so re-renders on the same tab don't jump back to the top
+        const previousScrollTop = containerEl.scrollTop;
+        const previousTab = this.lastRenderedTab;
+
         containerEl.empty();  // Clear any existing content
 
         // Add custom CSS for improved UI
@@ -120,6 +128,13 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 this.displayHelpTab(tabContent);
                 break;
         }
+
+        // Restore scroll position when re-rendering the same tab
+        // (skipped when jumping to a specific keyword, which handles its own scrolling)
+        if (previousTab === this.currentTab && !this.plugin.scrollToKeywordId) {
+            containerEl.scrollTop = previousScrollTop;
+        }
+        this.lastRenderedTab = this.currentTab;
     }
 
     /**
@@ -170,8 +185,56 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             this.display();
         });
 
+        // Sort, group filter and accordion controls
+        const viewRow = containerEl.createDiv({cls: 'akl-view-row'});
+
+        const sortSelect = viewRow.createEl('select', {cls: 'dropdown'});
+        [
+            ['manual', 'Sort: order added'],
+            ['newest', 'Sort: newest first'],
+            ['keyword-asc', 'Sort: keyword A–Z'],
+            ['keyword-desc', 'Sort: keyword Z–A'],
+            ['target', 'Sort: target note A–Z'],
+            ['group', 'Sort: by group']
+        ].forEach(([value, label]) => sortSelect.createEl('option', {value, text: label}));
+        sortSelect.value = this.plugin.settings.keywordSortOrder || 'manual';
+        sortSelect.addEventListener('change', async () => {
+            this.plugin.settings.keywordSortOrder = sortSelect.value;
+            await this.plugin.saveSettings();
+            this.renderKeywords(keywordsDiv);
+        });
+
+        const groupSelect = viewRow.createEl('select', {cls: 'dropdown'});
+        groupSelect.createEl('option', {value: 'all', text: 'All groups'});
+        groupSelect.createEl('option', {value: 'none', text: 'Not in a group'});
+        this.plugin.settings.keywordGroups.forEach(group => {
+            groupSelect.createEl('option', {value: group.id, text: `Group: ${group.name}`});
+        });
+        if (this.groupFilter !== 'all' && this.groupFilter !== 'none' &&
+            !this.plugin.settings.keywordGroups.some(g => g.id === this.groupFilter)) {
+            this.groupFilter = 'all'; // Filtered group was deleted
+        }
+        groupSelect.value = this.groupFilter;
+        groupSelect.addEventListener('change', () => {
+            this.groupFilter = groupSelect.value;
+            this.renderKeywords(keywordsDiv);
+        });
+
+        const accordionLabel = viewRow.createEl('label', {cls: 'akl-accordion-toggle'});
+        const accordionCheckbox = accordionLabel.createEl('input', {type: 'checkbox'});
+        accordionCheckbox.checked = this.plugin.settings.keywordAccordion !== false;
+        accordionLabel.appendText(' Open one at a time');
+        accordionCheckbox.addEventListener('change', async () => {
+            this.plugin.settings.keywordAccordion = accordionCheckbox.checked;
+            await this.plugin.saveSettings();
+        });
+
+        // Bulk actions bar (select, move to group, delete)
+        this.bulkBarEl = containerEl.createDiv({cls: 'akl-bulk-bar'});
+
         // Container for keyword list
         const keywordsDiv = containerEl.createDiv({cls: 'akl-keywords-container'});
+        this.keywordsDiv = keywordsDiv;
 
         // Render all current keywords
         this.renderKeywords(keywordsDiv);
@@ -185,8 +248,11 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         addBtn.addEventListener('click', () => {
             // Add empty keyword object to settings
             // Use null for inheritable boolean settings so they inherit from group if assigned
+            const newId = generateId('kw');
+            // Show and scroll to the new keyword even if sorting or filters would hide it
+            this.plugin.scrollToKeywordId = newId;
             this.plugin.settings.keywords.push({
-                id: generateId('kw'),
+                id: newId,
                 keyword: '',
                 target: '',
                 variations: [],
@@ -221,6 +287,146 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         if (targetText) {
             cardTitle.createSpan({text: targetText, cls: 'akl-target-name'});
         }
+    }
+
+    /**
+     * Get indices of keywords to show, after search and group filter, in the chosen sort order
+     * Sorting only affects display - the stored keyword order is unchanged
+     * @param {string|null} alwaysShowId - Keyword ID to include regardless of filters (scroll target)
+     * @returns {number[]} Indices into settings.keywords
+     */
+    getVisibleKeywordIndices(alwaysShowId = null) {
+        const keywords = this.plugin.settings.keywords;
+        const searchTerm = this.searchFilter.toLowerCase();
+        const groupNames = new Map(this.plugin.settings.keywordGroups.map(g => [g.id, g.name]));
+
+        const indices = keywords.map((_, i) => i).filter(i => {
+            const kw = keywords[i];
+            if (alwaysShowId && kw.id === alwaysShowId) return true;
+
+            if (this.groupFilter === 'none' && kw.groupId) return false;
+            if (this.groupFilter !== 'all' && this.groupFilter !== 'none' && kw.groupId !== this.groupFilter) return false;
+
+            if (searchTerm) {
+                const matches = (kw.keyword || '').toLowerCase().includes(searchTerm) ||
+                    (kw.target || '').toLowerCase().includes(searchTerm) ||
+                    (kw.variations || []).some(v => v.toLowerCase().includes(searchTerm));
+                if (!matches) return false;
+            }
+            return true;
+        });
+
+        const compare = (a, b) => (a || '').localeCompare(b || '', undefined, {sensitivity: 'base', numeric: true});
+        // IDs are "kw-<timestamp>-<random>"; older migrated IDs have no timestamp and sort as oldest
+        const createdAt = (kw) => {
+            const match = /^kw-(\d{10,})-/.exec(kw.id || '');
+            return match ? Number(match[1]) : 0;
+        };
+        const byKeyword = (a, b) => compare(keywords[a].keyword, keywords[b].keyword);
+
+        switch (this.plugin.settings.keywordSortOrder) {
+            case 'newest':
+                indices.sort((a, b) => createdAt(keywords[b]) - createdAt(keywords[a]) || b - a);
+                break;
+            case 'keyword-asc':
+                indices.sort(byKeyword);
+                break;
+            case 'keyword-desc':
+                indices.sort((a, b) => byKeyword(b, a));
+                break;
+            case 'target':
+                indices.sort((a, b) => compare(keywords[a].target, keywords[b].target) || byKeyword(a, b));
+                break;
+            case 'group':
+                // Grouped keywords together by group name, ungrouped last
+                indices.sort((a, b) => {
+                    const groupA = groupNames.get(keywords[a].groupId);
+                    const groupB = groupNames.get(keywords[b].groupId);
+                    if (!groupA !== !groupB) return groupA ? -1 : 1;
+                    return compare(groupA, groupB) || byKeyword(a, b);
+                });
+                break;
+        }
+
+        return indices;
+    }
+
+    /**
+     * Render the bulk actions bar for the Keywords tab
+     */
+    renderBulkBar() {
+        const bar = this.bulkBarEl;
+        if (!bar) return;
+        bar.empty();
+
+        // Drop selections for keywords that no longer exist
+        const existingIds = new Set(this.plugin.settings.keywords.map(kw => kw.id));
+        for (const id of this.selectedKeywordIds) {
+            if (!existingIds.has(id)) this.selectedKeywordIds.delete(id);
+        }
+
+        const count = this.selectedKeywordIds.size;
+        bar.toggleClass('akl-bulk-bar-active', count > 0);
+
+        // Select all / none for the keywords currently shown
+        const visible = this.visibleKeywordIds;
+        const allVisibleSelected = visible.length > 0 && visible.every(id => this.selectedKeywordIds.has(id));
+        const selectAllLabel = bar.createEl('label', {cls: 'akl-bulk-select-all'});
+        const selectAll = selectAllLabel.createEl('input', {type: 'checkbox'});
+        selectAll.checked = allVisibleSelected;
+        selectAll.indeterminate = !allVisibleSelected && visible.some(id => this.selectedKeywordIds.has(id));
+        selectAllLabel.appendText(count > 0 ? ` ${count} selected` : ' Select all shown');
+        selectAll.addEventListener('change', () => {
+            visible.forEach(id => selectAll.checked ? this.selectedKeywordIds.add(id) : this.selectedKeywordIds.delete(id));
+            this.renderKeywords(this.keywordsDiv);
+        });
+
+        if (count === 0) return;
+
+        // Move to group
+        const moveSelect = bar.createEl('select', {cls: 'dropdown'});
+        moveSelect.createEl('option', {value: '', text: 'Move to group…'});
+        moveSelect.createEl('option', {value: '__none__', text: 'Remove from group'});
+        this.plugin.settings.keywordGroups.forEach(group => {
+            moveSelect.createEl('option', {value: group.id, text: group.name});
+        });
+        moveSelect.addEventListener('change', async () => {
+            if (!moveSelect.value) return;
+            const groupId = moveSelect.value === '__none__' ? null : moveSelect.value;
+            const selected = this.plugin.settings.keywords.filter(kw => this.selectedKeywordIds.has(kw.id));
+            selected.forEach(kw => assignKeywordToGroup(kw, groupId));
+            await this.plugin.saveSettings();
+            const groupName = groupId ? this.plugin.settings.keywordGroups.find(g => g.id === groupId)?.name : null;
+            new Notice(groupName
+                ? `Moved ${selected.length} keyword(s) to "${groupName}"`
+                : `Removed ${selected.length} keyword(s) from their group`);
+            this.selectedKeywordIds.clear();
+            this.display();
+        });
+
+        // Delete (click twice to confirm)
+        const deleteBtn = bar.createEl('button', {text: `Delete ${count}`, cls: 'akl-delete-btn'});
+        let confirmPending = false;
+        deleteBtn.addEventListener('click', async () => {
+            if (!confirmPending) {
+                confirmPending = true;
+                deleteBtn.setText(`Confirm delete ${count}?`);
+                deleteBtn.addClass('mod-warning');
+                return;
+            }
+            this.plugin.settings.keywords = this.plugin.settings.keywords.filter(kw => !this.selectedKeywordIds.has(kw.id));
+            await this.plugin.saveSettings();
+            new Notice(`Deleted ${count} keyword(s)`);
+            this.selectedKeywordIds.clear();
+            this.display();
+        });
+
+        // Clear selection
+        const clearBtn = bar.createEl('button', {text: 'Clear selection'});
+        clearBtn.addEventListener('click', () => {
+            this.selectedKeywordIds.clear();
+            this.renderKeywords(this.keywordsDiv);
+        });
     }
 
     /**
@@ -270,7 +476,8 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     onlyInNotesLinkingTo: false,
                     suggestMode: false,
                     preventSelfLink: false,
-                    skipCodeBlocks: false
+                    skipCodeBlocks: false,
+                    caseSensitive: null
                 }
             });
             // Re-render the display to show new entry
@@ -302,7 +509,7 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         // Case sensitive toggle
         new Setting(containerEl)
             .setName('Case sensitive')
-            .setDesc('Match keywords with exact case')
+            .setDesc('Match keywords with exact case. Individual keywords and groups can override this.')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.caseSensitive)
                 .onChange(async (value) => {
@@ -500,34 +707,21 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
     renderKeywords(container) {
         container.empty();  // Clear existing content
 
-        // Filter keywords based on search term
-        const searchTerm = this.searchFilter.toLowerCase();
-        let visibleCount = 0;
-
         // Check if we need to scroll to a specific keyword (from addKeywordFromSelection)
         const scrollToId = this.plugin.scrollToKeywordId;
         let cardToScrollTo = null;
 
-        // Iterate through all keyword entries
-        for (let i = 0; i < this.plugin.settings.keywords.length; i++) {
+        // Search, group filter and sort order (display only)
+        const visibleIndices = this.getVisibleKeywordIndices(scrollToId);
+        this.visibleKeywordIds = visibleIndices.map(i => this.plugin.settings.keywords[i].id);
+        const visibleCount = visibleIndices.length;
+
+        // Expand/collapse functions for rendered cards, used for "open one at a time"
+        const cardTogglers = new Map(); // keyword id -> setExpanded(boolean)
+
+        // Iterate through the visible keyword entries
+        for (const i of visibleIndices) {
             const item = this.plugin.settings.keywords[i];
-
-            // Filter logic: search in keyword, target, and variations
-            // But always show the keyword we need to scroll to
-            if (searchTerm && item.id !== scrollToId) {
-                const matchesKeyword = item.keyword && item.keyword.toLowerCase().includes(searchTerm);
-                const matchesTarget = item.target && item.target.toLowerCase().includes(searchTerm);
-                const matchesVariations = item.variations && item.variations.some(v =>
-                    v.toLowerCase().includes(searchTerm)
-                );
-
-                // Skip this keyword if it doesn't match the search
-                if (!matchesKeyword && !matchesTarget && !matchesVariations) {
-                    continue;
-                }
-            }
-
-            visibleCount++;
 
             // Initialize collapsed state if not set
             if (item.collapsed === undefined) {
@@ -548,17 +742,58 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 cardDiv.addClass('akl-highlight-card');
             }
 
-            // Card header with collapse toggle
+            // Card header - click anywhere on it to expand/collapse
             const cardHeader = cardDiv.createDiv({cls: 'akl-card-header'});
 
-            // Collapse toggle button
+            // Selection checkbox for bulk actions
+            const selectBox = cardHeader.createEl('input', {type: 'checkbox', cls: 'akl-card-select'});
+            selectBox.checked = this.selectedKeywordIds.has(item.id);
+            selectBox.setAttribute('aria-label', `Select ${item.keyword || 'keyword'}`);
+            cardDiv.toggleClass('akl-card-selected', selectBox.checked);
+            selectBox.addEventListener('change', () => {
+                if (selectBox.checked) {
+                    this.selectedKeywordIds.add(item.id);
+                } else {
+                    this.selectedKeywordIds.delete(item.id);
+                }
+                cardDiv.toggleClass('akl-card-selected', selectBox.checked);
+                this.renderBulkBar();
+            });
+
+            // Collapse indicator
             const collapseBtn = cardHeader.createDiv({cls: 'akl-collapse-btn'});
             collapseBtn.innerHTML = item.collapsed ? '▶' : '▼';
             collapseBtn.setAttribute('aria-label', item.collapsed ? 'Expand' : 'Collapse');
-            collapseBtn.addEventListener('click', async () => {
-                item.collapsed = !item.collapsed;
+
+            // Expand/collapse in place (no re-render, so the list doesn't jump).
+            // The settings body is only built the first time the card is opened.
+            let bodyRendered = false;
+            const setExpanded = (expanded) => {
+                item.collapsed = !expanded;
+                if (expanded && !bodyRendered) {
+                    bodyRendered = true;
+                    renderBody();
+                }
+                cardBody.style.display = expanded ? '' : 'none';
+                cardDiv.toggleClass('akl-card-expanded', expanded);
+                collapseBtn.innerHTML = expanded ? '▼' : '▶';
+                collapseBtn.setAttribute('aria-label', expanded ? 'Collapse' : 'Expand');
+            };
+            cardTogglers.set(item.id, setExpanded);
+
+            cardHeader.addEventListener('click', async (e) => {
+                if (e.target === selectBox) return;
+                const expand = item.collapsed;
+                // "Open one at a time": close any other open keyword first
+                if (expand && this.plugin.settings.keywordAccordion !== false) {
+                    for (const [id, toggle] of cardTogglers) {
+                        if (id === item.id) continue;
+                        const other = this.plugin.settings.keywords.find(kw => kw.id === id);
+                        if (other && !other.collapsed) toggle(false);
+                    }
+                }
+                setExpanded(expand);
                 await this.plugin.saveSettings();
-                this.display();
             });
 
             // Card title area
@@ -609,12 +844,10 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 });
             }
 
-            // Card body (collapsible)
+            // Card body (collapsible, built on first expand)
             const cardBody = cardDiv.createDiv({cls: 'akl-card-body'});
-            if (item.collapsed) {
-                cardBody.style.display = 'none';
-            }
 
+            const renderBody = () => {
             // Check if keyword is in a group (used throughout the settings below)
             const isInGroup = !!item.groupId;
             const groupName = isInGroup ? this.plugin.settings.keywordGroups.find(g => g.id === item.groupId)?.name : null;
@@ -646,7 +879,7 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
 
                         // Check for duplicates before saving
                         if (value) {
-                            const duplicate = this.isDuplicateKeyword(value, item.id);
+                            const duplicate = this.isDuplicateKeyword(value, item.id, isKeywordCaseSensitive(this.plugin.settings, item));
                             if (duplicate) {
                                 text.inputEl.addClass('akl-input-error');
                                 keywordSetting.setDesc(`Duplicate: "${value}" already exists (keyword: "${duplicate.keyword}" → ${duplicate.target})`);
@@ -858,17 +1091,26 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                         item.variations = [];
                     }
 
-                    // Check for duplicates within this keyword's variations
-                    const isDuplicateLocal = item.variations.some(v => v.toLowerCase() === newVariation.toLowerCase());
+                    // Check for duplicates within this keyword (its own name and its variations)
+                    const itemCaseSensitive = isKeywordCaseSensitive(this.plugin.settings, item);
+                    const caseNote = itemCaseSensitive ? '' : ' (this keyword ignores case - set "Case sensitive" on the keyword or in General settings to treat them separately)';
+
+                    if (keywordTextsConflict(item.keyword, itemCaseSensitive, newVariation, itemCaseSensitive)) {
+                        new Notice(`"${newVariation}" already matches this keyword${caseNote}`);
+                        variationInput.value = '';
+                        return;
+                    }
+
+                    const isDuplicateLocal = item.variations.some(v => keywordTextsConflict(v, itemCaseSensitive, newVariation, itemCaseSensitive));
 
                     if (isDuplicateLocal) {
-                        new Notice('Variation already exists in this keyword');
+                        new Notice(`Variation already exists in this keyword${caseNote}`);
                         variationInput.value = '';
                         return;
                     }
 
                     // Check for duplicates across all keywords (excluding this one's variations)
-                    const duplicateKeyword = this.isDuplicateKeyword(newVariation, item.id);
+                    const duplicateKeyword = this.isDuplicateKeyword(newVariation, item.id, itemCaseSensitive);
                     if (duplicateKeyword) {
                         new Notice(`"${newVariation}" already exists as keyword "${duplicateKeyword.keyword}" → ${duplicateKeyword.target}`);
                         variationInput.value = '';
@@ -1036,6 +1278,33 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 skipCodeBlocksSetting.settingEl.addClass('akl-disabled-setting');
             }
 
+            // Case sensitive override (per-keyword)
+            const caseSensitiveSetting = new Setting(cardBody)
+                .setName('Case sensitive')
+                .setDesc(isInGroup
+                    ? `Inherited from group "${groupName}"`
+                    : 'Whether this keyword and its variations must match exact case. "Inherit" uses the global setting.')
+                .addDropdown(dropdown => {
+                    // null = inherit global, true = exact case, false = ignore case
+                    const source = isInGroup ? this.plugin.getEffectiveKeywordSettings(item) : item;
+                    const currentVal = source.caseSensitive === null || source.caseSensitive === undefined ? 'null' : String(source.caseSensitive);
+                    dropdown
+                        .addOption('null', 'Inherit global setting')
+                        .addOption('true', 'Match exact case')
+                        .addOption('false', 'Ignore case')
+                        .setValue(currentVal)
+                        .setDisabled(isInGroup)
+                        .onChange(async (value) => {
+                            if (!isInGroup) {
+                                this.plugin.settings.keywords[i].caseSensitive = value === 'null' ? null : value === 'true';
+                                await this.plugin.saveSettings();
+                            }
+                        });
+                });
+            if (isInGroup) {
+                caseSensitiveSetting.settingEl.addClass('akl-disabled-setting');
+            }
+
             // Link Scope dropdown
             const linkScopeSetting = new Setting(cardBody)
                 .setName('Link scope')
@@ -1116,17 +1385,24 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 // Re-render to show updated list
                 this.display();
             });
+            }; // end renderBody
+
+            setExpanded(!item.collapsed);
         }
 
-        // Show message if no keywords match the search
-        if (visibleCount === 0 && searchTerm) {
+        // Show message if no keywords match the search or group filter
+        if (visibleCount === 0 && (this.searchFilter || this.groupFilter !== 'all')) {
             const noResults = container.createDiv({cls: 'akl-no-results'});
             noResults.createEl('p', {text: 'No keywords found'});
             noResults.createEl('p', {
-                text: `No keywords match "${this.searchFilter}"`,
+                text: this.searchFilter
+                    ? `No keywords match "${this.searchFilter}"`
+                    : 'No keywords in this group',
                 cls: 'akl-no-results-hint'
             });
         }
+
+        this.renderBulkBar();
 
         // Scroll to the keyword card if needed (from addKeywordFromSelection)
         if (cardToScrollTo && scrollToId) {
@@ -1189,9 +1465,12 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             collapseBtn.innerHTML = group.collapsed ? '▶' : '▼';
             collapseBtn.setAttribute('aria-label', group.collapsed ? 'Expand' : 'Collapse');
             collapseBtn.addEventListener('click', async () => {
+                // Toggle in place rather than re-rendering, so the list doesn't jump
                 group.collapsed = !group.collapsed;
+                cardBody.style.display = group.collapsed ? 'none' : '';
+                collapseBtn.innerHTML = group.collapsed ? '▶' : '▼';
+                collapseBtn.setAttribute('aria-label', group.collapsed ? 'Expand' : 'Collapse');
                 await this.plugin.saveSettings();
-                this.display();
             });
 
             // Card title area
@@ -1379,6 +1658,23 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                         group.settings.skipCodeBlocks = value;
                         await this.plugin.saveSettings();
                     }));
+
+            // Case sensitive override
+            new Setting(settingsSection)
+                .setName('Case sensitive')
+                .setDesc('Whether keywords in this group must match exact case. "Inherit" uses the global setting.')
+                .addDropdown(dropdown => {
+                    const current = group.settings.caseSensitive;
+                    dropdown
+                        .addOption('null', 'Inherit global setting')
+                        .addOption('true', 'Match exact case')
+                        .addOption('false', 'Ignore case')
+                        .setValue(current === null || current === undefined ? 'null' : String(current))
+                        .onChange(async (value) => {
+                            group.settings.caseSensitive = value === 'null' ? null : value === 'true';
+                            await this.plugin.saveSettings();
+                        });
+                });
         }
     }
 
@@ -1727,6 +2023,7 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             'Enable "Skip headings" (General tab) to prevent keywords from being linked inside heading lines — this avoids breaking heading-based anchor links.',
             'Enable "Prevent self-links" so a note about "dog" does not link the word dog back to itself.',
             'Use Suggest mode on a keyword to review proposed links before they are applied.',
+            'To stop a keyword linking in one note, right-click its link and choose "Unlink and don\'t link again in this note". This adds the target to the note\'s akl-ignore property. Use "akl-ignore: all" to turn off linking for a whole note.',
             'Use the Tools tab to bulk-remove any links that were previously added inside headings.'
         ];
 

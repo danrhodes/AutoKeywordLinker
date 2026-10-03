@@ -6,6 +6,7 @@
 
 const SuggestionHandler = require('../ui/SuggestionHandler');
 const QuickAddKeywordModal = require('../ui/modals/QuickAddKeywordModal');
+const { findLinkAtCursor, ignoreKeywordAtCursor } = require('../commands/ignore');
 
 /**
  * Register all event listeners for the plugin
@@ -65,6 +66,24 @@ function registerEvents(plugin) {
                         .setIcon('file-plus')
                         .onClick(() => {
                             plugin.addKeywordFromSelection(selectedText.trim());
+                        });
+                });
+
+                menu.addSeparator();
+            }
+
+            // --------------------------------------------------------
+            // UNLINK AND DON'T LINK AGAIN
+            // --------------------------------------------------------
+            // Only offered when the cursor is on a link
+            const cursor = editor.getCursor();
+            if (findLinkAtCursor(editor.getLine(cursor.line), cursor.ch)) {
+                menu.addItem((item) => {
+                    item
+                        .setTitle('Unlink and don\'t link again in this note')
+                        .setIcon('unlink')
+                        .onClick(() => {
+                            ignoreKeywordAtCursor(plugin, editor);
                         });
                 });
 

@@ -4,6 +4,8 @@
  * Extracted from main-source.js (Session 8)
  */
 
+const { ignoreKeywordAtCursor } = require('../commands/ignore');
+
 /**
  * Register all plugin commands
  * @param {Plugin} plugin - The plugin instance
@@ -45,6 +47,13 @@ function registerCommands(plugin) {
         id: 'preview-keywords-in-all-notes',
         name: 'Preview keyword linking in all notes',
         callback: () => plugin.linkKeywordsInAllNotes(true)      // true = preview mode
+    });
+
+    // Register command: Unlink keyword at cursor and stop it being linked again in this note
+    plugin.addCommand({
+        id: 'ignore-keyword-in-current-note',
+        name: 'Unlink and don\'t link again in this note',
+        editorCallback: (editor) => ignoreKeywordAtCursor(plugin, editor)
     });
 
     // ============================================================

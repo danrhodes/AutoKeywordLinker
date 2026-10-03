@@ -23,7 +23,8 @@ function getEffectiveKeywordSettings(settings, keyword) {
         onlyInNotesLinkingTo: false,
         suggestMode: false,
         preventSelfLink: false,
-        skipCodeBlocks: null
+        skipCodeBlocks: null,
+        caseSensitive: null
     };
 
     // If keyword is in a group, use group settings (no keyword-level overrides allowed)
@@ -48,8 +49,38 @@ function getEffectiveKeywordSettings(settings, keyword) {
     if (keyword.suggestMode !== null && keyword.suggestMode !== undefined) effectiveSettings.suggestMode = keyword.suggestMode;
     if (keyword.preventSelfLink !== null && keyword.preventSelfLink !== undefined) effectiveSettings.preventSelfLink = keyword.preventSelfLink;
     if (keyword.skipCodeBlocks !== null && keyword.skipCodeBlocks !== undefined) effectiveSettings.skipCodeBlocks = keyword.skipCodeBlocks;
+    if (keyword.caseSensitive !== null && keyword.caseSensitive !== undefined) effectiveSettings.caseSensitive = keyword.caseSensitive;
 
     return effectiveSettings;
+}
+
+/**
+ * Resolve whether a keyword matches case-sensitively
+ * Keyword/group override wins; null or undefined means inherit the global setting
+ * @param {Object} settings - Plugin settings
+ * @param {Object} keyword - Keyword object
+ * @returns {boolean} True if matching is case-sensitive for this keyword
+ */
+function isKeywordCaseSensitive(settings, keyword) {
+    const override = getEffectiveKeywordSettings(settings, keyword).caseSensitive;
+    return override !== null && override !== undefined ? override : !!settings.caseSensitive;
+}
+
+/**
+ * Check whether two keyword texts would match the same words
+ * They conflict if identical, or if they differ only in case and either one ignores case
+ * @param {string} a - First keyword text
+ * @param {boolean} aCaseSensitive - Whether the first matches case-sensitively
+ * @param {string} b - Second keyword text
+ * @param {boolean} bCaseSensitive - Whether the second matches case-sensitively
+ * @returns {boolean} True if they conflict
+ */
+function keywordTextsConflict(a, aCaseSensitive, b, bCaseSensitive) {
+    const textA = (a || '').trim();
+    const textB = (b || '').trim();
+    if (!textA || !textB) return false;
+    if (textA === textB) return true;
+    return (!aCaseSensitive || !bCaseSensitive) && textA.toLowerCase() === textB.toLowerCase();
 }
 
 /**
@@ -60,23 +91,31 @@ function getEffectiveKeywordSettings(settings, keyword) {
  */
 function buildKeywordMap(app, settings) {
     const map = {};
-    // Track which keywords we've seen (case-insensitive) to detect duplicates
-    const seenKeywords = new Map(); // lowercase -> original keyword text
+    // Track which keywords we've seen to detect duplicates. "Goblin" and "goblin" can coexist
+    // only if both match case-sensitively; if either ignores case, the first one wins.
+    const seenExact = new Set();             // exact keyword text
+    const seenLowerAll = new Set();          // lowercase text of every keyword
+    const seenLowerCaseInsensitive = new Set(); // lowercase text of case-insensitive keywords
 
     // Helper to add a keyword to the map, skipping duplicates
-    const addToMap = (keywordText, target, effectiveSettings, keywordIndex) => {
+    const addToMap = (keywordText, target, effectiveSettings, keywordIndex, caseSensitive) => {
         const lowerKey = keywordText.toLowerCase();
+        const isDuplicate = seenExact.has(keywordText) ||
+            (caseSensitive ? seenLowerCaseInsensitive.has(lowerKey) : seenLowerAll.has(lowerKey));
 
-        // Check if we've already seen this keyword (case-insensitive)
-        if (seenKeywords.has(lowerKey)) {
+        if (isDuplicate) {
             // Skip duplicate - first one wins (silent, duplicates are a user data issue)
             return false;
         }
 
-        seenKeywords.set(lowerKey, keywordText);
+        seenExact.add(keywordText);
+        seenLowerAll.add(lowerKey);
+        if (!caseSensitive) seenLowerCaseInsensitive.add(lowerKey);
+
         map[keywordText] = {
             target: target,
             ...effectiveSettings,
+            caseSensitive: caseSensitive, // resolved: override or global
             keywordIndex: keywordIndex
         };
         return true;
@@ -92,15 +131,16 @@ function buildKeywordMap(app, settings) {
         // Get effective settings (merges group settings with keyword-specific settings)
         const effectiveSettings = getEffectiveKeywordSettings(settings, item);
         const keywordIndex = settings.keywords.indexOf(item);
+        const caseSensitive = isKeywordCaseSensitive(settings, item);
 
         // Add the main keyword with its settings
-        addToMap(item.keyword, item.target, effectiveSettings, keywordIndex);
+        addToMap(item.keyword, item.target, effectiveSettings, keywordIndex, caseSensitive);
 
         // Add all manual variations, all pointing to the same target with same settings
         if (item.variations && item.variations.length > 0) {
             for (let variation of item.variations) {
                 if (variation.trim()) {
-                    addToMap(variation, item.target, effectiveSettings, keywordIndex);
+                    addToMap(variation, item.target, effectiveSettings, keywordIndex, caseSensitive);
                 }
             }
         }
@@ -110,7 +150,7 @@ function buildKeywordMap(app, settings) {
         if (aliases && aliases.length > 0) {
             for (let alias of aliases) {
                 if (alias.trim()) {
-                    addToMap(alias, item.target, effectiveSettings, keywordIndex);
+                    addToMap(alias, item.target, effectiveSettings, keywordIndex, caseSensitive);
                 }
             }
         }
@@ -189,6 +229,8 @@ function checkLinkScope(app, sourceFile, targetNoteName, linkScope, scopeFolder,
 
 module.exports = {
     getEffectiveKeywordSettings,
+    isKeywordCaseSensitive,
+    keywordTextsConflict,
     buildKeywordMap,
     checkLinkScope
 };

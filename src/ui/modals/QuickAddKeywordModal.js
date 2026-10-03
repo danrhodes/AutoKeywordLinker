@@ -9,6 +9,7 @@
 const { Modal, Setting, Notice } = require('obsidian');
 const { generateId } = require('../../utils/helpers');
 const NoteSuggest = require('../suggests/NoteSuggest');
+const { findTargetFile } = require('../../utils/noteManagement');
 
 class QuickAddKeywordModal extends Modal {
     /**
@@ -51,7 +52,7 @@ class QuickAddKeywordModal extends Modal {
         // Target note input with autocomplete
         const targetSetting = new Setting(contentEl)
             .setName('Target note')
-            .setDesc('The note to link to (type to search, or enter a new note name to create it)')
+            .setDesc('The note to link to (type to search, or enter a new note name)')
             .addText(text => {
                 text.setPlaceholder('Search or create note...')
                     .setValue(this.selectedText); // Pre-fill with keyword as default
@@ -74,9 +75,18 @@ class QuickAddKeywordModal extends Modal {
                 }, 50);
             });
 
-        // Hint about creating new notes
-        const hintEl = contentEl.createDiv({ cls: 'akl-hint-text' });
-        hintEl.setText('Tip: If the note doesn\'t exist, it will be created automatically.');
+        // Option to create the target note if it doesn't exist (remembers the last choice)
+        this.createNote = this.plugin.settings.quickAddCreateNote !== false;
+        new Setting(contentEl)
+            .setName('Create note if it doesn\'t exist')
+            .setDesc('Turn off to add the keyword without creating its target note')
+            .addToggle(toggle => toggle
+                .setValue(this.createNote)
+                .onChange(async (value) => {
+                    this.createNote = value;
+                    this.plugin.settings.quickAddCreateNote = value;
+                    await this.plugin.saveSettings();
+                }));
 
         // Button row
         const buttonRow = contentEl.createDiv({ cls: 'akl-action-row' });
@@ -119,11 +129,11 @@ class QuickAddKeywordModal extends Modal {
             return;
         }
 
-        // Check if target note exists, create if not
+        // Check if target note exists anywhere in the vault (by name or path), create if not and enabled
         const notePath = target.endsWith('.md') ? target : `${target}.md`;
-        const existingFile = this.app.vault.getAbstractFileByPath(notePath);
+        const existingFile = findTargetFile(this.app, target);
 
-        if (!existingFile) {
+        if (!existingFile && this.createNote) {
             try {
                 // Use the new note template if configured
                 const template = this.plugin.settings.newNoteTemplate || '# {{keyword}}\n\nCreated: {{date}}\n\n';

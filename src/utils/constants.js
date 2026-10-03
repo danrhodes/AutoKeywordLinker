@@ -40,9 +40,12 @@ const DEFAULT_SETTINGS = {
     firstOccurrenceOnly: true,       // Whether to link only the first occurrence of each keyword
     autoCreateNotes: false,           // Whether to automatically create notes that don't exist
     newNoteFolder: '',               // Folder where new notes will be created (empty = root)
-    newNoteTemplate: '# {{keyword}}\n\nCreated: {{date}}\n\n',  // Template for new notes
+    keywordSortOrder: 'manual',      // How the Keywords tab list is sorted (display only, doesn't reorder settings)
+    keywordAccordion: true,          // Keywords tab: opening one keyword closes the others
+    quickAddCreateNote: true,        // Whether Quick Add Keyword creates the target note if it doesn't exist
+    newNoteTemplate:'# {{keyword}}\n\nCreated: {{date}}\n\n',  // Template for new notes
     customStopWords: [],             // Additional stop words to exclude from keyword suggestions (appended to defaults)
-    preventSelfLinkGlobal: false,    // Global setting: prevent linking keywords on their target notes
+    preventSelfLinkGlobal: true,     // Global setting: prevent linking keywords on their target notes (recommended in Help tab)
     skipHeadings: true,              // Skip keyword linking on Markdown heading lines (## Heading)
     skipCodeBlocks: false,           // Skip keyword linking and suggestions inside fenced code blocks (``` or ~~~)
     statistics: {                    // Statistics tracking
