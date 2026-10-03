@@ -679,9 +679,16 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 });
 
             // Target note input field with fuzzy search modal
-            new Setting(cardBody)
+            const targetDesc = 'Click to search and select the note to create links to';
+            const missingTargetDesc = 'No target note set - this keyword will not be linked until you choose one';
+            const updateTargetWarning = (target) => {
+                const missing = !!item.keyword && !(target && target.trim());
+                targetSetting.setDesc(missing ? missingTargetDesc : targetDesc);
+                targetSetting.descEl.toggleClass('akl-error-text', missing);
+            };
+            const targetSetting = new Setting(cardBody)
                 .setName('Target note')
-                .setDesc('Click to search and select the note to create links to')
+                .setDesc(targetDesc)
                 .addText(text => {
                     // Get all markdown files for the fuzzy search
                     const files = this.app.vault.getMarkdownFiles();
@@ -716,8 +723,10 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
 
                         // Update card header title without full re-render
                         this.updateCardHeader(cardTitle, this.plugin.settings.keywords[i].keyword, value);
+                        updateTargetWarning(value);
                     });
                 });
+            updateTargetWarning(item.target);
 
             // Block reference input field
             new Setting(cardBody)
@@ -1052,21 +1061,26 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             }
 
             // Folder selector (only shown for source-folder or target-folder scopes)
-            if (item.linkScope === 'source-folder' || item.linkScope === 'target-folder') {
+            // For grouped keywords, show the group's folder (read-only)
+            const effectiveScope = this.plugin.getEffectiveKeywordSettings(item);
+            if (effectiveScope.linkScope === 'source-folder' || effectiveScope.linkScope === 'target-folder') {
                 // Get all unique folders in the vault
                 const folders = this.getAllFolders();
 
                 // Add empty string for root option
                 const allFolders = ['', ...folders];
 
-                new Setting(cardBody)
+                const folderSetting = new Setting(cardBody)
                     .setName('Folder')
-                    .setDesc('Type to search and select a folder')
+                    .setDesc(isInGroup ? `Inherited from group "${groupName}"` : 'Type to search and select a folder')
                     .addText(text => {
                         // Display current folder or root
-                        const displayValue = item.scopeFolder || '/ (Root)';
+                        const displayValue = effectiveScope.scopeFolder || '/ (Root)';
                         text.setValue(displayValue)
-                            .setPlaceholder('Type to search folders...');
+                            .setPlaceholder('Type to search folders...')
+                            .setDisabled(isInGroup);
+
+                        if (isInGroup) return;
 
                         // Attach folder suggest
                         new FolderSuggest(this.app, text.inputEl, allFolders);
@@ -1082,6 +1096,9 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                             await this.plugin.saveSettings();
                         });
                     });
+                if (isInGroup) {
+                    folderSetting.settingEl.addClass('akl-disabled-setting');
+                }
             }
 
             // Card footer with actions
@@ -1281,7 +1298,32 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     .onChange(async (value) => {
                         group.settings.linkScope = value;
                         await this.plugin.saveSettings();
+                        this.display(); // Re-render to show/hide folder input
                     }));
+
+            // Folder selector (only shown for source-folder or target-folder scopes)
+            if (group.settings.linkScope === 'source-folder' || group.settings.linkScope === 'target-folder') {
+                const allFolders = ['', ...this.getAllFolders()];
+
+                new Setting(settingsSection)
+                    .setName('Folder')
+                    .setDesc('Type to search and select a folder')
+                    .addText(text => {
+                        text.setValue(group.settings.scopeFolder || '/ (Root)')
+                            .setPlaceholder('Type to search folders...');
+
+                        new FolderSuggest(this.app, text.inputEl, allFolders);
+
+                        text.onChange(async (value) => {
+                            let folderValue = (value === '/ (Root)') ? '' : value;
+                            if (folderValue) {
+                                folderValue = normalizePath(folderValue);
+                            }
+                            group.settings.scopeFolder = folderValue;
+                            await this.plugin.saveSettings();
+                        });
+                    });
+            }
 
             // Enable tags toggle
             new Setting(settingsSection)
@@ -1560,35 +1602,28 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         // 5. Find unlinked keyword mentions
         new Setting(containerEl)
             .setName('Find unlinked keyword mentions')
-            .setDesc('Scans the vault for keywords that appear as plain text but have not been linked yet.')
+            .setDesc('Scans the vault for keyword mentions that would be linked by running "Link keywords in all notes".')
             .addButton(button => button
                 .setButtonText('Run')
                 .onClick(async () => {
                     const files = this.app.vault.getMarkdownFiles();
-                    const keywords = this.plugin.settings.keywords.flatMap(kw =>
-                        [kw.keyword, ...(kw.variations || [])].filter(w => w && w.trim())
-                    );
+                    // Use the real linking engine in preview mode so the audit applies exactly
+                    // the same rules (scope, tags, first occurrence, skipped contexts, etc.)
+                    const linker = this.plugin.keywordLinker;
+                    linker.settings = this.plugin.settings;
 
-                    const unlinked = new Map(); // keyword → Set of file basenames
+                    const unlinked = new Map(); // lowercase keyword → { label, files: Set of file basenames }
 
                     for (const file of files) {
-                        const content = await this.app.vault.read(file);
-                        // Strip frontmatter
-                        const body = content.startsWith('---') ? content.replace(/^---[\s\S]*?---\n?/, '') : content;
+                        const content = await this.app.vault.cachedRead(file);
+                        const processed = linker.processContent(content, file, true, true);
 
-                        for (const kw of keywords) {
-                            const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                            const boundary = /^\w/.test(kw) ? `\\b${escaped}\\b` : escaped;
-                            const plainPattern = new RegExp(boundary, 'gi');
-                            const linkedPattern = new RegExp(`\\[\\[[^\\]]*\\|${escaped}\\]\\]|\\[\\[${escaped}\\]\\]`, 'gi');
-
-                            const plainMatches = body.match(plainPattern) || [];
-                            const linkedMatches = body.match(linkedPattern) || [];
-
-                            if (plainMatches.length > linkedMatches.length) {
-                                if (!unlinked.has(kw)) unlinked.set(kw, new Set());
-                                unlinked.get(kw).add(file.basename);
+                        for (const change of processed.changes) {
+                            const key = change.keyword.toLowerCase();
+                            if (!unlinked.has(key)) {
+                                unlinked.set(key, { label: `"${change.keyword}" → ${change.target}`, files: new Set() });
                             }
+                            unlinked.get(key).files.add(file.basename);
                         }
                     }
 
@@ -1604,9 +1639,9 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
 
                     results.createEl('p', { text: `${unlinked.size} keyword${unlinked.size !== 1 ? 's' : ''} found with unlinked mentions:`, cls: 'akl-tool-results-title' });
                     const list = results.createEl('ul', { cls: 'akl-help-list' });
-                    unlinked.forEach((fileSet, kw) => {
+                    unlinked.forEach(({ label, files: fileSet }) => {
                         const fileList = Array.from(fileSet).join(', ');
-                        list.createEl('li', { text: `"${kw}" — in: ${fileList}` });
+                        list.createEl('li', { text: `${label} — in: ${fileList}` });
                     });
                 }));
 

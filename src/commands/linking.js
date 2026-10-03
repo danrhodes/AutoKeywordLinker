@@ -4,6 +4,7 @@
  */
 
 const { Notice } = require('obsidian');
+const { findTargetFile } = require('../utils/noteManagement');
 
 /**
  * Link keywords in the current note
@@ -38,6 +39,10 @@ async function linkKeywordsInCurrentNote(app, settings, linkKeywordsInFile, save
     // If preview mode and we have results, show preview modal
     if (preview && results) {
         new PreviewModal(app, results, activeFile.basename).open();
+    }
+    // If preview mode but no results, inform user
+    else if (preview) {
+        new Notice('No keywords found to link in this note');
     }
     // If not preview mode and changes were made, show success message
     else if (!preview && results && results.changed) {
@@ -77,8 +82,18 @@ async function linkKeywordsInAllNotes(app, settings, linkKeywordsInFile, saveSet
     let filesModified = 0;     // Number of files that were changed
     let previewResults = [];   // Array to store preview results
 
+    // Show immediate feedback - this can take a while on large or cloud-synced vaults
+    const action = preview ? 'Checking' : 'Linking keywords in';
+    const progressNotice = new Notice(`${action} ${files.length} note(s)...`, 0);
+
     // Process each file - note we're NOT using skipTags, so tags will be added immediately
+    let processedCount = 0;
     for (let file of files) {
+        processedCount++;
+        if (processedCount % 25 === 0) {
+            progressNotice.setMessage(`${action} ${files.length} note(s)... (${processedCount}/${files.length})`);
+        }
+
         // CRITICAL FIX: Skip non-markdown files (attachments, etc.)
         if (file.extension !== 'md') {
             continue;
@@ -108,6 +123,8 @@ async function linkKeywordsInAllNotes(app, settings, linkKeywordsInFile, saveSet
         }
     }
 
+    progressNotice.hide();
+
     // Update statistics if not preview mode
     if (!preview && filesModified > 0) {
         settings.statistics.totalLinksCreated += totalLinks;
@@ -120,14 +137,35 @@ async function linkKeywordsInAllNotes(app, settings, linkKeywordsInFile, saveSet
     if (preview && previewResults.length > 0) {
         new BulkPreviewModal(app, previewResults, pluginInstance).open();
     }
-    // If preview mode but no results, inform user
-    else if (preview) {
-        new Notice('No keywords found to link in any notes');
+    // No matches - explain what to check rather than reporting "0 in 0"
+    else if (filesModified === 0) {
+        new Notice(getNoMatchesMessage(app, settings), 10000);
     }
     // If not preview mode, show summary of changes
     else {
         new Notice(`Linked ${totalLinks} keyword(s) in ${filesModified} note(s)!`);
     }
+}
+
+/**
+ * Build a helpful message for when no keywords were found to link
+ * @param {Object} app - Obsidian app instance
+ * @param {Object} settings - Plugin settings
+ * @returns {string} Message to show the user
+ */
+function getNoMatchesMessage(app, settings) {
+    let message = 'No keywords found to link in any notes. Check that your keywords appear as plain text in your notes and have a target note set.';
+
+    if (!settings.autoCreateNotes) {
+        const missingTargets = settings.keywords.filter(kw =>
+            kw.keyword && kw.keyword.trim() && kw.target && kw.target.trim() && !findTargetFile(app, kw.target)
+        ).length;
+        if (missingTargets > 0) {
+            message += ` ${missingTargets} keyword target note(s) don't exist yet - turn on "Auto-create notes" to create them automatically.`;
+        }
+    }
+
+    return message;
 }
 
 module.exports = {
