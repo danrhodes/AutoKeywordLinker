@@ -18,7 +18,7 @@ const NoteSuggest = require('../suggests/NoteSuggest');
 
 // Import utility functions
 const { generateId } = require('../../utils/helpers');
-const { isKeywordCaseSensitive, keywordTextsConflict } = require('../../utils/linking');
+const { isKeywordCaseSensitive, keywordTextsConflict, sameTarget } = require('../../utils/linking');
 const { assignKeywordToGroup } = require('../../utils/groups');
 
 class AutoKeywordLinkerSettingTab extends PluginSettingTab {
@@ -34,6 +34,7 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
         this.selectedKeywordIds = new Set(); // Keywords ticked for bulk actions
         this.visibleKeywordIds = []; // Keyword IDs currently shown (after search/filter)
         this.currentTab = 'keywords'; // Track which tab is active: 'keywords', 'groups', 'general', 'import-export', 'tools', 'help'
+        this.addedAtTopIds = new Set(); // Keywords added with the top button, shown first until settings close
     }
 
     /**
@@ -42,13 +43,17 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
      * @param {string} keyword - The keyword to check
      * @param {string} excludeId - Optional ID to exclude (for editing existing keywords)
      * @param {boolean} caseSensitive - Whether the keyword being checked matches case-sensitively
+     * @param {string} target - Target of the keyword being checked. With "Pick target from context" on,
+     *                          the same text may point at different targets, so only a same-target match is a duplicate
      * @returns {Object|null} The existing keyword object if duplicate found, null otherwise
      */
-    isDuplicateKeyword(keyword, excludeId = null, caseSensitive = !!this.plugin.settings.caseSensitive) {
+    isDuplicateKeyword(keyword, excludeId = null, caseSensitive = !!this.plugin.settings.caseSensitive, target = null) {
         if (!keyword || !keyword.trim()) return null;
+        const allowSharedText = this.plugin.settings.contextDisambiguation !== false;
 
         for (const kw of this.plugin.settings.keywords) {
             if (excludeId && kw.id === excludeId) continue;
+            if (allowSharedText && !sameTarget(kw.target, target)) continue;
             const kwCaseSensitive = isKeywordCaseSensitive(this.plugin.settings, kw);
 
             // Check main keyword and variations
@@ -58,6 +63,25 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             }
         }
         return null;
+    }
+
+    /**
+     * Find other keywords that share text (keyword or variation) with this one but link elsewhere
+     * - the ones "Pick target from context" chooses between
+     * @param {Object} item - Keyword object
+     * @returns {Array<Object>} The other keywords
+     */
+    getKeywordsSharingText(item) {
+        if (this.plugin.settings.contextDisambiguation === false || !item.keyword) return [];
+        const itemCaseSensitive = isKeywordCaseSensitive(this.plugin.settings, item);
+        const itemTexts = [item.keyword, ...(item.variations || [])];
+
+        return this.plugin.settings.keywords.filter(kw => {
+            if (kw.id === item.id || !kw.target || sameTarget(kw.target, item.target)) return false;
+            const kwCaseSensitive = isKeywordCaseSensitive(this.plugin.settings, kw);
+            const kwTexts = [kw.keyword, ...(kw.variations || [])];
+            return itemTexts.some(a => kwTexts.some(b => keywordTextsConflict(a, itemCaseSensitive, b, kwCaseSensitive)));
+        });
     }
 
     /**
@@ -185,6 +209,13 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             this.display();
         });
 
+        // Add keyword button at the top too, so adding many doesn't mean scrolling to the bottom
+        const topAddBtn = foldBtnContainer.createEl('button', {
+            text: '+ Add keyword',
+            cls: 'mod-cta akl-add-button-top'
+        });
+        topAddBtn.addEventListener('click', () => this.addEmptyKeyword(true));
+
         // Sort, group filter and accordion controls
         const viewRow = containerEl.createDiv({cls: 'akl-view-row'});
 
@@ -245,32 +276,7 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             text: '+ Add keyword',
             cls: 'mod-cta akl-add-button'
         });
-        addBtn.addEventListener('click', () => {
-            // Add empty keyword object to settings
-            // Use null for inheritable boolean settings so they inherit from group if assigned
-            const newId = generateId('kw');
-            // Show and scroll to the new keyword even if sorting or filters would hide it
-            this.plugin.scrollToKeywordId = newId;
-            this.plugin.settings.keywords.push({
-                id: newId,
-                keyword: '',
-                target: '',
-                variations: [],
-                enableTags: null,
-                linkScope: 'vault-wide',
-                scopeFolder: '',
-                useRelativeLinks: null,
-                blockRef: '',
-                requireTag: '',
-                onlyInNotesLinkingTo: null,
-                suggestMode: null,
-                preventSelfLink: null,
-                collapsed: false,
-                groupId: null
-            });
-            // Re-render the display to show new entry
-            this.display();
-        });
+        addBtn.addEventListener('click', () => this.addEmptyKeyword(false));
     }
 
     /**
@@ -348,7 +354,56 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 break;
         }
 
+        // Keywords added with the top "Add keyword" button stay at the top (newest first)
+        // until settings close, so adding several in a row doesn't mean scrolling
+        if (this.addedAtTopIds.size > 0) {
+            const pinned = indices.filter(i => this.addedAtTopIds.has(keywords[i].id)).sort((a, b) => b - a);
+            return [...pinned, ...indices.filter(i => !this.addedAtTopIds.has(keywords[i].id))];
+        }
+
         return indices;
+    }
+
+    /**
+     * Add an empty keyword and open its card
+     * @param {boolean} atTop - Show the new card at the top of the list (rather than where the sort puts it)
+     */
+    addEmptyKeyword(atTop) {
+        // Use null for inheritable boolean settings so they inherit from group if assigned
+        const newId = generateId('kw');
+        // Show and scroll to the new keyword even if sorting or filters would hide it
+        this.plugin.scrollToKeywordId = newId;
+        if (atTop) {
+            this.addedAtTopIds.add(newId);
+        }
+        this.plugin.settings.keywords.push({
+            id: newId,
+            keyword: '',
+            target: '',
+            variations: [],
+            enableTags: null,
+            linkScope: 'vault-wide',
+            scopeFolder: '',
+            useRelativeLinks: null,
+            blockRef: '',
+            requireTag: '',
+            onlyInNotesLinkingTo: null,
+            suggestMode: null,
+            preventSelfLink: null,
+            collapsed: false,
+            groupId: null
+        });
+        // Re-render the display to show new entry
+        this.display();
+    }
+
+    /**
+     * Called when the settings tab closes
+     */
+    hide() {
+        super.hide();
+        // Newly added keywords go back to their normal sort position next time
+        this.addedAtTopIds.clear();
     }
 
     /**
@@ -549,6 +604,32 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     this.plugin.settings.skipCodeBlocks = value;
                     await this.plugin.saveSettings();
                 }));
+
+        // Context disambiguation toggle
+        new Setting(containerEl)
+            .setName('Pick target from context')
+            .setDesc('When several keywords share the same text but link to different notes (e.g. "Mercury" → planet and "Mercury" → element), choose the target for each mention from the words, links, tags and folder around it. Off: the first keyword always wins.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.contextDisambiguation !== false)
+                .onChange(async (value) => {
+                    this.plugin.settings.contextDisambiguation = value;
+                    await this.plugin.saveSettings();
+                    this.display();
+                }));
+
+        if (this.plugin.settings.contextDisambiguation !== false) {
+            new Setting(containerEl)
+                .setName('When context is unclear')
+                .setDesc('What to do with a shared keyword when nothing around it clearly points to one target')
+                .addDropdown(dropdown => dropdown
+                    .addOption('first', 'Link to the first keyword\'s target')
+                    .addOption('skip', 'Leave it unlinked')
+                    .setValue(this.plugin.settings.ambiguousFallback || 'first')
+                    .onChange(async (value) => {
+                        this.plugin.settings.ambiguousFallback = value;
+                        await this.plugin.saveSettings();
+                    }));
+        }
 
         // Auto-link on save toggle
         new Setting(containerEl)
@@ -828,6 +909,11 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
             if (effectiveSettings.suggestMode) {
                 cardBadges.createSpan({text: 'Suggest', cls: 'akl-badge akl-badge-suggest'});
             }
+            const sharingKeywords = this.getKeywordsSharingText(item);
+            if (sharingKeywords.length > 0) {
+                const sharedBadge = cardBadges.createSpan({text: 'Shared', cls: 'akl-badge akl-badge-shared'});
+                sharedBadge.setAttribute('aria-label', `Shares text with ${sharingKeywords.map(kw => kw.target).join(', ')} - target picked from context`);
+            }
 
             // Get auto-discovered aliases for counting (will be reused later)
             const autoAliasesForItem = this.plugin.getAliasesForNote(item.target);
@@ -879,7 +965,7 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
 
                         // Check for duplicates before saving
                         if (value) {
-                            const duplicate = this.isDuplicateKeyword(value, item.id, isKeywordCaseSensitive(this.plugin.settings, item));
+                            const duplicate = this.isDuplicateKeyword(value, item.id, isKeywordCaseSensitive(this.plugin.settings, item), item.target);
                             if (duplicate) {
                                 text.inputEl.addClass('akl-input-error');
                                 keywordSetting.setDesc(`Duplicate: "${value}" already exists (keyword: "${duplicate.keyword}" → ${duplicate.target})`);
@@ -1034,6 +1120,24 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                         });
                 });
 
+            // Context hints - only relevant when another keyword shares this text
+            if (sharingKeywords.length > 0) {
+                const others = sharingKeywords.map(kw => `"${kw.keyword}" → ${kw.target}`).join(', ');
+                new Setting(cardBody)
+                    .setName('Context hints')
+                    .setDesc(`Shares text with ${others}. Each mention links to whichever target its surroundings fit best. List words or phrases that point to this target (comma-separated), e.g. "planet, orbit, NASA".`)
+                    .addText(text => {
+                        text.setValue((item.contextHints || []).join(', '))
+                            .setPlaceholder('word, another phrase')
+                            .onChange(async (value) => {
+                                this.plugin.settings.keywords[i].contextHints = value.split(',').map(h => h.trim()).filter(Boolean);
+                                await this.plugin.saveSettings();
+                            });
+                        text.inputEl.addClass('akl-input');
+                        text.inputEl.setAttribute('autocomplete', 'off');
+                    });
+            }
+
             // Variations with chip-style interface
             const variationsContainer = cardBody.createDiv({cls: 'akl-variations-section'});
             variationsContainer.createEl('div', {
@@ -1110,7 +1214,7 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     }
 
                     // Check for duplicates across all keywords (excluding this one's variations)
-                    const duplicateKeyword = this.isDuplicateKeyword(newVariation, item.id, itemCaseSensitive);
+                    const duplicateKeyword = this.isDuplicateKeyword(newVariation, item.id, itemCaseSensitive, item.target);
                     if (duplicateKeyword) {
                         new Notice(`"${newVariation}" already exists as keyword "${duplicateKeyword.keyword}" → ${duplicateKeyword.target}`);
                         variationInput.value = '';
@@ -1907,15 +2011,17 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     // the same rules (scope, tags, first occurrence, skipped contexts, etc.)
                     const linker = this.plugin.keywordLinker;
                     linker.settings = this.plugin.settings;
+                    const keywordMap = this.plugin.buildKeywordMap();
+                    await linker.warmContextCache(keywordMap);
 
-                    const unlinked = new Map(); // lowercase keyword → { label, files: Set of file basenames }
+                    const unlinked = new Map(); // lowercase keyword + target → { label, files: Set of file basenames }
 
                     for (const file of files) {
                         const content = await this.app.vault.cachedRead(file);
-                        const processed = linker.processContent(content, file, true, true);
+                        const processed = linker.processContent(content, file, true, true, keywordMap);
 
                         for (const change of processed.changes) {
-                            const key = change.keyword.toLowerCase();
+                            const key = `${change.keyword.toLowerCase()}\u0000${change.target.toLowerCase()}`;
                             if (!unlinked.has(key)) {
                                 unlinked.set(key, { label: `"${change.keyword}" → ${change.target}`, files: new Set() });
                             }

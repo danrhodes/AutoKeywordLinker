@@ -10,6 +10,7 @@ const { Modal, Setting, Notice } = require('obsidian');
 const { generateId } = require('../../utils/helpers');
 const NoteSuggest = require('../suggests/NoteSuggest');
 const { findTargetFile } = require('../../utils/noteManagement');
+const { findDuplicateKeyword } = require('../../utils/linking');
 
 class QuickAddKeywordModal extends Modal {
     /**
@@ -121,11 +122,9 @@ class QuickAddKeywordModal extends Modal {
         }
 
         // Check for duplicate keyword
-        const existingKeyword = this.plugin.settings.keywords.find(
-            kw => kw.keyword.toLowerCase() === this.selectedText.toLowerCase()
-        );
+        const existingKeyword = findDuplicateKeyword(this.plugin.settings, this.selectedText, target);
         if (existingKeyword) {
-            new Notice(`Keyword "${this.selectedText}" already exists`);
+            new Notice(`Keyword "${this.selectedText}" → ${existingKeyword.target} already exists`);
             return;
         }
 

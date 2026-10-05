@@ -51,6 +51,11 @@
 - Scope inheritance through subfolders
 - Multiple keywords can target same term in different contexts
 - Context-aware linking prevents ambiguous matches
+- 🆕 Same keyword text, different targets: each mention links to the target its paragraph and note fit best
+- 🆕 Scores context hints, words shared with the target note, existing links, linked neighbours, tags and folder
+- 🆕 Per-keyword context hints field (shown when another keyword shares the text)
+- 🆕 Configurable fallback when context is unclear (first keyword's target, or leave unlinked)
+- 🆕 Previews explain why each shared keyword went to its target
 - Allows same keyword with different meanings in different folders
 
 ## 🆕 Advanced Link Options

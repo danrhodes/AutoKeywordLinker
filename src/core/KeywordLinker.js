@@ -5,11 +5,102 @@ const { getEffectiveKeywordSettings, buildKeywordMap, checkLinkScope } = require
 const { findTargetFile, getAliasesForNote, noteHasTag, noteHasLinkToTarget, ensureNoteExists } = require('../utils/noteManagement');
 const { sanitizeTagName, addTagsToContent, addTagToTargetNote } = require('../utils/tagManagement');
 const { getIgnoreList, isIgnored } = require('../utils/ignore');
+const { getParagraphAt, stripMarkup, buildTargetProfile, buildNoteContext, warmBodyCache, pickTarget } = require('../utils/disambiguation');
 
 class KeywordLinker {
     constructor(app, settings) {
         this.app = app;
         this.settings = settings;
+        // Body words of target notes that share keyword text, for context disambiguation
+        this.bodyCache = new Map(); // path → { mtime, terms }
+    }
+
+    /**
+     * Check a keyword entry's per-note rules: self-link protection, "only in notes linking
+     * to target", required tag and link scope
+     * @param {Object} entry - Keyword map entry
+     * @param {TFile} file - The file being processed
+     * @returns {boolean} True if the entry may link in this file
+     */
+    entryAppliesHere(entry, file) {
+        const target = entry.target;
+
+        // Self-link protection (global setting OR per-keyword setting)
+        if (this.settings.preventSelfLinkGlobal || entry.preventSelfLink) {
+            if (file.basename === target.split('/').pop()) {
+                return false;
+            }
+        }
+
+        // Only link in notes that already link to the target
+        if (entry.onlyInNotesLinkingTo && !noteHasLinkToTarget(this.app, file, target)) {
+            return false;
+        }
+
+        // Target note must have the required tag
+        if (!noteHasTag(this.app, target, entry.requireTag || '')) {
+            return false;
+        }
+
+        return checkLinkScope(this.app, file, target, entry.linkScope || 'vault-wide', entry.scopeFolder || '', findTargetFile);
+    }
+
+    /**
+     * Pick which of several targets sharing keyword text a match should link to,
+     * based on the paragraph it's in and the note as a whole
+     * @param {Object} state - Per-run caches (noteContext, profiles, picks)
+     * @param {Array<Object>} entries - Eligible keyword map entries, in settings order
+     * @param {string} keyword - The keyword text
+     * @param {string} content - Current content
+     * @param {number} index - Match position
+     * @param {TFile} file - The file being processed
+     * @param {string} originalContent - Content before this run's changes
+     * @returns {Object|null} { entry, confident, reasons, others }, or null to leave the match unlinked
+     */
+    pickTargetForMatch(state, entries, keyword, content, index, file, originalContent) {
+        // Links added earlier in this run don't change the paragraph's plain text,
+        // so every candidate's pass reaches the same decision for a given match
+        const paragraph = getParagraphAt(content, index);
+        const memoKey = `${keyword.toLowerCase()}\u0000${stripMarkup(paragraph)}`;
+        if (state.picks.has(memoKey)) {
+            return state.picks.get(memoKey);
+        }
+
+        if (!state.noteContext) {
+            state.noteContext = buildNoteContext(this.app, file, originalContent);
+        }
+        const profiles = entries.map(entry => {
+            if (!state.profiles.has(entry)) {
+                state.profiles.set(entry, buildTargetProfile(this.app, entry, this.bodyCache));
+            }
+            return state.profiles.get(entry);
+        });
+
+        const result = pickTarget(profiles, state.noteContext, paragraph, keyword);
+
+        let pick = null;
+        if (result.confident) {
+            pick = { entry: result.entry, confident: true, reasons: result.scores[0].reasons };
+        } else if (this.settings.ambiguousFallback !== 'skip') {
+            // Unclear: fall back to the first keyword in settings order (the pre-disambiguation behaviour)
+            pick = { entry: entries[0], confident: false, reasons: [] };
+        }
+        if (pick) {
+            pick.others = entries.filter(e => e !== pick.entry).map(e => e.target);
+        }
+
+        state.picks.set(memoKey, pick);
+        return pick;
+    }
+
+    /**
+     * Read the body text of targets that share keyword text, so context picks can use it.
+     * Optional - picks work from note metadata alone - but call before processContent() when you can.
+     * @param {Object} [keywordMap] - Map from buildKeywordMap(), built if not given
+     */
+    async warmContextCache(keywordMap) {
+        if (this.settings.contextDisambiguation === false) return;
+        await warmBodyCache(this.app, keywordMap || buildKeywordMap(this.app, this.settings), this.bodyCache);
     }
 
     /**
@@ -20,9 +111,10 @@ class KeywordLinker {
      * @param {TFile} file - The file being processed (for context checks)
      * @param {boolean} preview - If true, don't track for actual changes
      * @param {boolean} skipTags - If true, don't add tags, just return pending tags
+     * @param {Object} [prebuiltKeywordMap] - Map from buildKeywordMap(), built if not given
      * @returns {Object} Processing result with newContent, linkCount, changes, etc.
      */
-    processContent(content, file, preview = false, skipTags = false) {
+    processContent(content, file, preview = false, skipTags = false, prebuiltKeywordMap = null) {
         const originalContent = content;
         const originalLength = content.length;
 
@@ -40,27 +132,56 @@ class KeywordLinker {
 
         // Build a map of all keywords to their target notes
         // (akl-ignore: all leaves the map empty, so nothing is linked in this note)
-        const keywordMap = ignoreList.all ? {} : buildKeywordMap(this.app, this.settings);
+        const keywordMap = ignoreList.all ? {} : (prebuiltKeywordMap || buildKeywordMap(this.app, this.settings));
 
         // Group keywords (including variations and aliases) by target note, so each target
         // is handled once - otherwise every variation/alias could add its own link to the same note
-        const targetGroups = new Map(); // lowercase target -> { target, keywords: [] }
-        for (const keyword of Object.keys(keywordMap)) {
-            const target = keywordMap[keyword].target;
-            if (!keyword.trim() || !target || !target.trim()) continue;
-            // Skip keywords whose target or own text is in this note's ignore list
-            if (isIgnored(ignoreList, target) || isIgnored(ignoreList, keyword)) continue;
-            const key = target.toLowerCase();
+        const targetGroups = new Map(); // lowercase target -> { target, keywords: [{ text, entry, ambiguous }] }
+        const addToGroup = (text, entry, ambiguous) => {
+            const key = entry.target.toLowerCase();
             if (!targetGroups.has(key)) {
-                targetGroups.set(key, { target, keywords: [] });
+                targetGroups.set(key, { target: entry.target, keywords: [] });
             }
-            targetGroups.get(key).keywords.push(keyword);
+            targetGroups.get(key).keywords.push({ text, entry, ambiguous });
+        };
+
+        for (const keyword of Object.keys(keywordMap)) {
+            if (!keyword.trim()) continue;
+            // Skip keywords whose own text is in this note's ignore list
+            if (isIgnored(ignoreList, keyword)) continue;
+
+            // Every target this text can point at (more than one when keywords share text),
+            // minus targets in this note's ignore list
+            const primary = keywordMap[keyword];
+            const entries = [primary, ...(primary.alternatives || [])]
+                .filter(e => e.target && e.target.trim() && !isIgnored(ignoreList, e.target));
+            if (entries.length === 0) continue;
+            if (entries.length === 1) {
+                addToGroup(keyword, entries[0], null);
+                continue;
+            }
+
+            // Shared text: only targets whose rules (scope, tags, ...) allow linking here compete
+            const eligible = entries.filter(e => this.entryAppliesHere(e, file));
+            if (eligible.length === 1) {
+                addToGroup(keyword, eligible[0], null);
+            } else {
+                // Each candidate's pass keeps only the matches the context picks it for
+                eligible.forEach(e => addToGroup(keyword, e, eligible));
+            }
         }
+
+        // Context for picking between targets that share keyword text (built on first use)
+        const disambiguation = {
+            noteContext: null,
+            profiles: new Map(), // entry → profile
+            picks: new Map()     // keyword + paragraph → pick
+        };
 
         // Longest keywords first, so longer phrases claim text before shorter overlapping ones
         const groups = Array.from(targetGroups.values());
-        groups.forEach(group => group.keywords.sort((a, b) => b.length - a.length));
-        groups.sort((a, b) => b.keywords[0].length - a.keywords[0].length);
+        groups.forEach(group => group.keywords.sort((a, b) => b.text.length - a.text.length));
+        groups.sort((a, b) => b.keywords[0].text.length - a.keywords[0].text.length);
 
         // Track all replacements made (for cursor position adjustment)
         const allReplacements = [];
@@ -80,41 +201,15 @@ class KeywordLinker {
             // Collect valid matches for every keyword form that points at this target
             const candidates = [];
 
-            for (const keyword of group.keywords) {
-                const keywordSettings = keywordMap[keyword];
-                const linkScope = keywordSettings.linkScope || 'vault-wide';
-                const scopeFolder = keywordSettings.scopeFolder || '';
-                const requireTag = keywordSettings.requireTag || '';
-                const onlyInNotesLinkingTo = keywordSettings.onlyInNotesLinkingTo || false;
-                const preventSelfLink = keywordSettings.preventSelfLink || false;
+            for (const { text: keyword, entry: keywordSettings, ambiguous } of group.keywords) {
                 // Per-keyword skipCodeBlocks: null means inherit global, true/false overrides
                 const perKeywordSkip = keywordSettings.skipCodeBlocks;
                 const skipCodeBlocks = perKeywordSkip !== null && perKeywordSkip !== undefined
                     ? perKeywordSkip
                     : (this.settings.skipCodeBlocks || false);
 
-                // Check self-link protection - skip if we're on the target note itself
-                // Use global setting OR per-keyword setting
-                if (this.settings.preventSelfLinkGlobal || preventSelfLink) {
-                    const currentFileBase = file.basename;
-                    const targetBase = target.split('/').pop();
-                    if (currentFileBase === targetBase) {
-                        continue;
-                    }
-                }
-
-                // Check if we should only link in notes that already link to target
-                if (onlyInNotesLinkingTo && !noteHasLinkToTarget(this.app, file, target)) {
-                    continue;
-                }
-
-                // Check if target note has required tag
-                if (!noteHasTag(this.app, target, requireTag)) {
-                    continue;
-                }
-
-                // Check link scope
-                if (!checkLinkScope(this.app, file, target, linkScope, scopeFolder, findTargetFile)) {
+                // Self-link, "only in notes linking to target", required tag and link scope
+                if (!ambiguous && !this.entryAppliesHere(keywordSettings, file)) {
                     continue;
                 }
 
@@ -182,7 +277,16 @@ class KeywordLinker {
                         continue;
                     }
 
-                    candidates.push({ index: matchIndex, matchText, keyword, keywordSettings });
+                    // Keyword shared with other targets: keep the match only if the context picks this one
+                    let pick = null;
+                    if (ambiguous) {
+                        pick = this.pickTargetForMatch(disambiguation, ambiguous, keyword, content, matchIndex, file, originalContent);
+                        if (!pick || pick.entry !== keywordSettings) {
+                            continue;
+                        }
+                    }
+
+                    candidates.push({ index: matchIndex, matchText, keyword, keywordSettings, pick });
                 }
             }
 
@@ -203,7 +307,7 @@ class KeywordLinker {
 
             const replacements = [];
 
-            for (const { index: matchIndex, matchText, keyword, keywordSettings } of selected) {
+            for (const { index: matchIndex, matchText, keyword, keywordSettings, pick } of selected) {
                 const enableTags = keywordSettings.enableTags;
                 const useRelativeLinks = keywordSettings.useRelativeLinks || false;
                 const blockRef = keywordSettings.blockRef || '';
@@ -246,11 +350,17 @@ class KeywordLinker {
                 });
 
                 // Store change for preview
-                changes.push({
+                const change = {
                     keyword: matchText,
                     target: target,
                     context: getContext(content, matchIndex)
-                });
+                };
+                if (pick) {
+                    change.pickedFromContext = pick.confident
+                        ? `Chosen from context (${pick.reasons.join('; ')}) over ${pick.others.join(', ')}`
+                        : `Context unclear - used the first keyword's target over ${pick.others.join(', ')}`;
+                }
+                changes.push(change);
 
                 // If tags are enabled, prepare to add tags
                 if (enableTags) {
@@ -317,15 +427,20 @@ class KeywordLinker {
 
         // If auto-create is enabled, ensure all target notes exist before processing
         // This needs to happen before we enter the processing callback
+        const keywordMap = buildKeywordMap(this.app, this.settings);
         if (this.settings.autoCreateNotes) {
-            const keywordMap = buildKeywordMap(this.app, this.settings);
             for (const keyword of Object.keys(keywordMap)) {
-                const target = keywordMap[keyword].target;
-                if (target && target.trim()) {
-                    await ensureNoteExists(this.app, this.settings, target);
+                const entries = [keywordMap[keyword], ...(keywordMap[keyword].alternatives || [])];
+                for (const { target } of entries) {
+                    if (target && target.trim()) {
+                        await ensureNoteExists(this.app, this.settings, target);
+                    }
                 }
             }
         }
+
+        // Read targets that share keyword text, so picking between them can use their body text
+        await this.warmContextCache(keywordMap);
 
         let result = null;
 
@@ -335,7 +450,7 @@ class KeywordLinker {
             const currentContent = editor.getValue();
 
             // Process the content
-            const processed = this.processContent(currentContent, file, preview, skipTags);
+            const processed = this.processContent(currentContent, file, preview, skipTags, keywordMap);
 
             if (!processed.changed) {
                 return null;
@@ -429,7 +544,7 @@ class KeywordLinker {
             let processed = null;
 
             await this.app.vault.process(file, (data) => {
-                processed = this.processContent(data, file, preview, skipTags);
+                processed = this.processContent(data, file, preview, skipTags, keywordMap);
 
                 if (!processed.changed || preview) {
                     // Return original data unchanged

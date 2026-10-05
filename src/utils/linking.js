@@ -84,40 +84,82 @@ function keywordTextsConflict(a, aCaseSensitive, b, bCaseSensitive) {
 }
 
 /**
+ * Check whether two target note names refer to the same note (ignores case and a trailing .md)
+ * @param {string} a - First target
+ * @param {string} b - Second target
+ * @returns {boolean} True if they match
+ */
+function sameTarget(a, b) {
+    const normalize = (t) => (t || '').trim().replace(/\.md$/i, '').toLowerCase();
+    return normalize(a) === normalize(b);
+}
+
+/**
+ * Find another keyword that a new keyword would duplicate: same text (ignoring case), and - when
+ * "Pick target from context" is on, so shared text is allowed - the same target too
+ * @param {Object} settings - Plugin settings
+ * @param {string} text - Keyword text
+ * @param {string} target - Keyword target
+ * @returns {Object|undefined} The existing keyword, if any
+ */
+function findDuplicateKeyword(settings, text, target) {
+    const allowSharedText = settings.contextDisambiguation !== false;
+    return settings.keywords.find(kw =>
+        (kw.keyword || '').toLowerCase() === (text || '').toLowerCase() &&
+        (!allowSharedText || sameTarget(kw.target, target)));
+}
+
+/**
  * Build a map of all keywords (including variations and aliases) to their target notes and settings
+ * When context disambiguation is on, the same text pointing at a different target is kept as an
+ * alternative on the first entry (entry.alternatives) so the linker can pick one by context
  * @param {Object} app - Obsidian app instance
  * @param {Object} settings - Plugin settings
  * @returns {Object} Map where keys are keywords/variations and values are objects with target and settings
  */
 function buildKeywordMap(app, settings) {
     const map = {};
+    const disambiguate = settings.contextDisambiguation !== false;
     // Track which keywords we've seen to detect duplicates. "Goblin" and "goblin" can coexist
     // only if both match case-sensitively; if either ignores case, the first one wins.
     const seenExact = new Set();             // exact keyword text
     const seenLowerAll = new Set();          // lowercase text of every keyword
     const seenLowerCaseInsensitive = new Set(); // lowercase text of case-insensitive keywords
+    const firstKeyByLower = new Map();       // lowercase text → first map key with that text
 
     // Helper to add a keyword to the map, skipping duplicates
-    const addToMap = (keywordText, target, effectiveSettings, keywordIndex, caseSensitive) => {
+    const addToMap = (keywordText, target, effectiveSettings, keywordIndex, caseSensitive, contextHints) => {
         const lowerKey = keywordText.toLowerCase();
+        const entry = {
+            target: target,
+            ...effectiveSettings,
+            caseSensitive: caseSensitive, // resolved: override or global
+            keywordIndex: keywordIndex,
+            contextHints: contextHints || []
+        };
         const isDuplicate = seenExact.has(keywordText) ||
             (caseSensitive ? seenLowerCaseInsensitive.has(lowerKey) : seenLowerAll.has(lowerKey));
 
         if (isDuplicate) {
-            // Skip duplicate - first one wins (silent, duplicates are a user data issue)
+            // Same text, different target: keep it as an alternative to choose between by context.
+            // Otherwise skip it - first one wins (silent, duplicates are a user data issue)
+            const existingKey = seenExact.has(keywordText) ? keywordText : firstKeyByLower.get(lowerKey);
+            const existing = existingKey && map[existingKey];
+            if (disambiguate && existing) {
+                const alternatives = existing.alternatives || [];
+                if (![existing, ...alternatives].some(e => sameTarget(e.target, target))) {
+                    existing.alternatives = [...alternatives, entry];
+                }
+            }
             return false;
         }
 
         seenExact.add(keywordText);
         seenLowerAll.add(lowerKey);
         if (!caseSensitive) seenLowerCaseInsensitive.add(lowerKey);
+        if (!firstKeyByLower.has(lowerKey)) firstKeyByLower.set(lowerKey, keywordText);
 
-        map[keywordText] = {
-            target: target,
-            ...effectiveSettings,
-            caseSensitive: caseSensitive, // resolved: override or global
-            keywordIndex: keywordIndex
-        };
+        map[keywordText] = entry;
         return true;
     };
 
@@ -132,15 +174,16 @@ function buildKeywordMap(app, settings) {
         const effectiveSettings = getEffectiveKeywordSettings(settings, item);
         const keywordIndex = settings.keywords.indexOf(item);
         const caseSensitive = isKeywordCaseSensitive(settings, item);
+        const contextHints = Array.isArray(item.contextHints) ? item.contextHints : [];
 
         // Add the main keyword with its settings
-        addToMap(item.keyword, item.target, effectiveSettings, keywordIndex, caseSensitive);
+        addToMap(item.keyword, item.target, effectiveSettings, keywordIndex, caseSensitive, contextHints);
 
         // Add all manual variations, all pointing to the same target with same settings
         if (item.variations && item.variations.length > 0) {
             for (let variation of item.variations) {
                 if (variation.trim()) {
-                    addToMap(variation, item.target, effectiveSettings, keywordIndex, caseSensitive);
+                    addToMap(variation, item.target, effectiveSettings, keywordIndex, caseSensitive, contextHints);
                 }
             }
         }
@@ -150,7 +193,7 @@ function buildKeywordMap(app, settings) {
         if (aliases && aliases.length > 0) {
             for (let alias of aliases) {
                 if (alias.trim()) {
-                    addToMap(alias, item.target, effectiveSettings, keywordIndex, caseSensitive);
+                    addToMap(alias, item.target, effectiveSettings, keywordIndex, caseSensitive, contextHints);
                 }
             }
         }
@@ -231,6 +274,8 @@ module.exports = {
     getEffectiveKeywordSettings,
     isKeywordCaseSensitive,
     keywordTextsConflict,
+    sameTarget,
+    findDuplicateKeyword,
     buildKeywordMap,
     checkLinkScope
 };

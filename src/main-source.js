@@ -5,7 +5,7 @@ const { Plugin } = require('obsidian');
 const { loadSettings, saveSettings, setupSettingsWatcher } = require('./settings');
 
 // Import refactored modules (Session 2)
-const { getEffectiveKeywordSettings, buildKeywordMap, checkLinkScope } = require('./utils/linking');
+const { getEffectiveKeywordSettings, buildKeywordMap, checkLinkScope, findDuplicateKeyword } = require('./utils/linking');
 const { getAliasesForNote, noteHasTag, noteHasLinkToTarget, ensureNoteExists, findTargetFile } = require('./utils/noteManagement');
 
 // Import refactored modules (Session 3)
@@ -534,9 +534,8 @@ module.exports = class AutoKeywordLinker extends Plugin {
         const { Notice } = require('obsidian');
 
         // Check for duplicate keyword
-        const existingKeyword = this.settings.keywords.find(
-            kw => kw.keyword.toLowerCase() === selectedText.toLowerCase()
-        );
+        // (the new keyword's target starts as its own text)
+        const existingKeyword = findDuplicateKeyword(this.settings, selectedText, selectedText);
         if (existingKeyword) {
             new Notice(`Keyword "${selectedText}" already exists`);
             return;

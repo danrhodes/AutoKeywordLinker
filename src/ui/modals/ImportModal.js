@@ -5,6 +5,7 @@
  */
 
 const { Modal, Notice } = require('obsidian');
+const { findDuplicateKeyword } = require('../../utils/linking');
 
 class ImportModal extends Modal {
     constructor(app, plugin) {
@@ -75,9 +76,10 @@ class ImportModal extends Modal {
                             item.enableTags = false;
                         }
 
-                        // Check if this keyword already exists (case-insensitive)
-                        const existingIndex = this.plugin.settings.keywords.findIndex(
-                            k => k.keyword.toLowerCase() === item.keyword.toLowerCase()
+                        // Check if this keyword already exists (case-insensitive; with "Pick target
+                        // from context" on, the same text with a different target is a separate keyword)
+                        const existingIndex = this.plugin.settings.keywords.indexOf(
+                            findDuplicateKeyword(this.plugin.settings, item.keyword, item.target)
                         );
 
                         if (existingIndex !== -1) {
