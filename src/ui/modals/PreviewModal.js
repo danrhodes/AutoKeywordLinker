@@ -46,6 +46,11 @@ class PreviewModal extends Modal {
 
             // Show surrounding context
             item.createEl('small', {text: change.context, cls: 'preview-context'});
+
+            // Explain the pick when the keyword is shared by several targets
+            if (change.pickedFromContext) {
+                item.createEl('small', {text: change.pickedFromContext, cls: 'akl-context-pick'});
+            }
         }
 
         // Create button container

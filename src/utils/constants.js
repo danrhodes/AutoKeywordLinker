@@ -48,6 +48,8 @@ const DEFAULT_SETTINGS = {
     preventSelfLinkGlobal: true,     // Global setting: prevent linking keywords on their target notes (recommended in Help tab)
     skipHeadings: true,              // Skip keyword linking on Markdown heading lines (## Heading)
     skipCodeBlocks: false,           // Skip keyword linking and suggestions inside fenced code blocks (``` or ~~~)
+    contextDisambiguation: true,     // When keywords share text but point at different notes, pick the target from context
+    ambiguousFallback: 'first',      // When context doesn't clearly pick one: 'first' (first keyword's target) or 'skip' (don't link)
     statistics: {                    // Statistics tracking
         totalLinksCreated: 0,
         totalNotesProcessed: 0,

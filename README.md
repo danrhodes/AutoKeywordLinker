@@ -127,6 +127,77 @@ Scope Folder: Health/
 - **Reduced Noise**: Target notes only show relevant backlinks
 - **Flexible Configuration**: Mix vault-wide and scoped keywords
 
+#### 🆕 Picking the right target from context
+
+Scoping works when meanings live in different folders. When they share a folder, or even a note, you can give the same keyword text to several keywords, each with a different target. The plugin then reads the text around each mention and links it to the target that fits.
+
+**Example: "Mercury" the planet vs. "Mercury" the element**
+
+1. **Create a target note for each meaning** and write a line or two in it. The words in these notes are how the plugin tells the meanings apart:
+
+   `Mercury (Planet).md`
+   ```
+   The smallest planet, closest to the Sun. Its orbit takes 88 days and its surface is covered in craters. NASA's MESSENGER probe mapped it.
+   ```
+
+   `Mercury (Element).md`
+   ```
+   A toxic chemical element - a heavy liquid metal once used in thermometers.
+   ```
+
+2. **Add two keywords with the same text**: in **Settings → Auto Keyword Linker → Keywords**, click **+ Add keyword** twice:
+
+   | Keyword | Target note |
+   |---|---|
+   | Mercury | Mercury (Planet) |
+   | Mercury | Mercury (Element) |
+
+   Both cards now show a **Shared** badge.
+
+3. **Add context hints** (optional, recommended). Open each Mercury card and fill in the **Context hints** field that appears on shared keywords, with comma-separated words or phrases that point to that meaning:
+
+   | Keyword → Target | Context hints |
+   |---|---|
+   | Mercury → Mercury (Planet) | `orbit, sun, craters, NASA, telescope` |
+   | Mercury → Mercury (Element) | `toxic, thermometer, metal, chemical` |
+
+   Hints count most. They also work when the target notes are still empty.
+
+4. **Write as normal.** This note:
+
+   ```
+   We watched Mercury cross the Sun; its orbit is fast and the craters are visible.
+
+   Later we read how Mercury in old thermometers is toxic.
+   ```
+
+   is linked as:
+
+   ```
+   We watched [[Mercury (Planet)|Mercury]] cross the Sun; its orbit is fast and the craters are visible.
+
+   Later we read how [[Mercury (Element)|Mercury]] in old thermometers is toxic.
+   ```
+
+   Each paragraph is decided on its own, so one note can use both meanings.
+
+5. **Check the reasoning (optional).** Run **Preview keyword linking in current note**. Each shared keyword shows why it went where it did, e.g. *Chosen from context (words: sun, orbit, crater) over Mercury (Element)*.
+
+**What the plugin looks at**, strongest first:
+- **Context hints** in the same paragraph (or, counting less, elsewhere in the note)
+- **Links** the note already has to the target, or to notes the target links to or is linked from
+- **Words shared** with the target note's name, aliases, headings, tags, frontmatter and body text. Plurals match ("thermometers" = "thermometer"), and words that every candidate has are ignored
+- **Shared tags** and **same folder**
+
+**When context is unclear.** If nothing clearly points one way (e.g. "I thought about Mercury today"), **General → When context is unclear** decides: link to the first keyword's target (default), or leave the mention unlinked.
+
+**Tips**
+- **Mentions keep going to the first target?** The plugin probably has nothing to compare against. Add context hints, or put some text in the target notes, and check that each keyword's target note actually exists.
+- **Fixing a wrong link:** text that's already linked isn't relinked. Turn the wrong link back into plain text and save, and the plugin decides again. A link that only shows the keyword, like `[[Mercury (Planet)|Mercury]]`, is never used as evidence, so one wrong link won't pull later mentions the same way.
+- **Aliases count:** if `Mercury (Planet)` has the frontmatter alias "Mercury" and a keyword "Mercury" points at the element, the plugin picks between them in the same way.
+- **Scopes and required tags apply first:** a target ruled out for a note by its link scope or required tag doesn't compete there. Two scoped "Sprint" keywords simply use whichever is in scope.
+- **Turning it off:** switch off **General → Pick target from context** to go back to "first keyword wins".
+
 ### 3. **🆕 Relative Link Support**
 
 **NEW**: Create relative path links instead of absolute paths for better portability.
@@ -405,6 +476,8 @@ The plugin adds 8 commands to Obsidian's command palette:
 - **Case sensitive**: Require exact case match for keywords
 - **First occurrence only**: Link only the first occurrence of each keyword per note
 - **Auto-create notes**: Automatically create target notes that don't exist
+- **🆕 Pick target from context**: When keywords share text but link to different notes, choose the target for each mention from its surroundings
+- **🆕 When context is unclear**: Link to the first keyword's target, or leave the mention unlinked
 
 ### Note Creation Settings
 
@@ -422,6 +495,7 @@ Each keyword can be configured with:
 - **🆕 Scope Folder**: Folder path for scoped linking
 - **🆕 Use Relative Links**: Create relative path links
 - **🆕 Block Reference**: Optional block/heading reference
+- **🆕 Context Hints**: Words that point to this target, shown when another keyword shares its text
 
 ## 🚀 Getting Started
 

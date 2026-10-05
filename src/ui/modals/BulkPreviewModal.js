@@ -190,6 +190,11 @@ class BulkPreviewModal extends Modal {
                     lineInfo.style.marginTop = '2px';
                     lineInfo.textContent = `Line ${change.lineNumber + 1}`;
                 }
+
+                // Explain the pick when the keyword is shared by several targets
+                if (change.pickedFromContext) {
+                    linkContent.createEl('small', {text: change.pickedFromContext, cls: 'akl-context-pick'});
+                }
             });
         });
 

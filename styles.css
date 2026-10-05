@@ -386,6 +386,17 @@
     color: white;
 }
 
+.akl-badge-shared {
+    background: var(--color-purple);
+    color: white;
+}
+
+.akl-context-pick {
+    display: block;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
 .akl-badge-group {
     background: var(--interactive-accent);
     color: white;
@@ -855,6 +866,14 @@
 
 .akl-fold-btn-container {
     flex-shrink: 0;
+    display: flex;
+    gap: 0.5em;
+}
+
+.akl-add-button-top {
+    padding: 0.6em 1em;
+    font-size: 0.9em;
+    white-space: nowrap;
 }
 
 .akl-fold-button {
