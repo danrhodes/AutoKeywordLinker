@@ -21,6 +21,7 @@
 /* Tab Navigation */
 .akl-tab-nav {
     display: flex;
+    flex-wrap: wrap;  /* tabs move to a new line when the window is too narrow */
     gap: 0.5em;
     margin-bottom: 1.5em;
     border-bottom: 2px solid var(--background-modifier-border);
@@ -50,12 +51,8 @@
     border-bottom-color: var(--interactive-accent) !important;
 }
 
-/* Responsive: Wrap tabs on portrait phones */
+/* Responsive: Smaller tabs on portrait phones */
 @media (max-width: 600px) and (orientation: portrait) {
-    .akl-tab-nav {
-        flex-wrap: wrap;
-    }
-
     .akl-tab-button {
         padding: 0.6em 1em;
         font-size: 0.9em;
@@ -425,9 +422,9 @@
     padding: 1em;
 }
 
+/* Padding is left to Obsidian, so keyword cards match every other settings row */
 .akl-card-body .setting-item {
     border: none;
-    padding: 0.75em 0;
 }
 
 .akl-input {
@@ -436,7 +433,8 @@
 
 /* Variations Section */
 .akl-variations-section {
-    padding: 0.75em 0;
+    /* Line up with the settings rows around it (Obsidian's own row padding where available) */
+    padding: var(--setting-items-padding-y, 0.75em) var(--setting-items-padding-x, 0);
     border-top: 1px solid var(--background-modifier-border);
     margin-top: 0.5em;
 }
@@ -910,7 +908,6 @@
 
 .akl-quick-add-modal .setting-item {
     border: none;
-    padding: 0.75em 0;
 }
 
 .akl-quick-add-modal .akl-input {
@@ -985,10 +982,6 @@
     font-size: 1em;
 }
 
-.akl-keywords-container .akl-card-body .setting-item {
-    padding: 0.5em 0;
-}
-
 .akl-card-select {
     flex-shrink: 0;
     margin: 0;
@@ -1055,4 +1048,93 @@
     50% {
         box-shadow: 0 0 0 4px var(--interactive-accent-hover), 0 0 20px var(--interactive-accent);
     }
+}
+
+/* Keyword relationships report and Related sections preview */
+.akl-related-modal {
+    max-width: 100%;
+}
+
+.akl-related-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1em;
+    margin-bottom: 1em;
+}
+
+.akl-related-controls input[type="number"] {
+    width: 4em;
+}
+
+.akl-related-count {
+    color: var(--text-muted);
+    margin-left: auto;
+}
+
+.akl-related-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25em 1em;
+    padding: 0.6em 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.akl-related-names {
+    font-weight: 600;
+    flex: 1 1 14em;
+}
+
+.akl-related-info {
+    color: var(--text-muted);
+    font-size: 0.9em;
+    flex: 1 1 14em;
+}
+
+.akl-related-status-badge {
+    margin-left: 0.5em;
+    padding: 0.1em 0.5em;
+    border-radius: 8px;
+    font-size: 0.85em;
+    background: var(--background-secondary);
+}
+
+.akl-related-not-linked {
+    color: var(--text-warning);
+}
+
+.akl-related-linked,
+.akl-related-in-related {
+    color: var(--text-success);
+}
+
+.akl-related-actions {
+    display: flex;
+    gap: 0.4em;
+}
+
+.akl-related-notes {
+    flex-basis: 100%;
+    font-size: 0.9em;
+}
+
+.akl-related-preview-item {
+    margin-bottom: 1em;
+}
+
+.akl-related-preview-columns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14em, 1fr));
+    gap: 0.75em;
+    margin-top: 0.4em;
+}
+
+.akl-related-preview-columns pre {
+    margin: 0.2em 0 0;
+    padding: 0.5em;
+    background: var(--background-secondary);
+    border-radius: 4px;
+    white-space: pre-wrap;
+    font-size: 0.85em;
 }

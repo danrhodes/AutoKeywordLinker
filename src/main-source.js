@@ -27,6 +27,9 @@ const ImportCSVModal = require('./ui/modals/ImportCSVModal');
 const PreviewModal = require('./ui/modals/PreviewModal');
 const SuggestionReviewModal = require('./ui/modals/SuggestionReviewModal');
 const BulkPreviewModal = require('./ui/modals/BulkPreviewModal');
+const RelationshipsModal = require('./ui/modals/RelationshipsModal');
+const RelatedPreviewModal = require('./ui/modals/RelatedPreviewModal');
+const { analyzeCooccurrence, planRelatedUpdates } = require('./utils/cooccurrence');
 
 // Import UI components (Session 6)
 const AutoKeywordLinkerSettingTab = require('./ui/settings/AutoKeywordLinkerSettingTab');
@@ -163,6 +166,30 @@ module.exports = class AutoKeywordLinker extends Plugin {
      */
     showStatistics() {
         return showStatsCmd(this.app, this.settings, StatisticsModal);
+    }
+
+    /**
+     * Open the report of keyword targets that keep appearing together
+     */
+    showRelationships() {
+        new RelationshipsModal(this.app, this).open();
+    }
+
+    /**
+     * Work out the Related sections for opted-in target notes and preview the changes
+     */
+    async updateRelatedSections() {
+        const { Notice } = require('obsidian');
+        const analysis = await analyzeCooccurrence(this.app, this.settings);
+        const updates = await planRelatedUpdates(this.app, this.settings, analysis);
+        if (updates.length === 0) {
+            const optedIn = Array.from(analysis.targets.values()).some(t => t.optedIn);
+            new Notice(optedIn || (this.settings.relatedPins || []).length > 0
+                ? 'Related sections are up to date'
+                : 'No keywords have "Related section" turned on - enable it on a keyword or group first');
+            return;
+        }
+        new RelatedPreviewModal(this.app, updates).open();
     }
 
     /**

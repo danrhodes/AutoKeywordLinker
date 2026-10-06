@@ -455,9 +455,65 @@ Type: Auto-created note
 ## References
 ```
 
+### 13. **🆕 Keyword Relationships and Related Sections**
+
+The plugin already knows which keyword targets you link in which notes. It uses that to find pairs that keep appearing together, such as a project and the person who runs it. It can then keep a **Related** list in each target note, so the connection shows in the note, in backlinks and in the graph.
+
+**How "together" is measured**:
+- **Same paragraph** (or the same top-level bullet, nested bullets included) counts fully
+- **Same note, different paragraph** counts less
+- **Hub notes count less**: a daily note or index that links many targets adds less to each pair than a focused note
+- **Strength** compares a pair's score with how often the rarer target appears. "Sarah appears in 30 notes and 23 of them also mention Atlas" ranks above two popular notes that overlap by chance
+
+Only links count (not unlinked mentions), and the scan uses Obsidian's metadata cache, so it's quick even on large vaults.
+
+**Example: a project and its lead**
+
+Your meeting notes often link `[[Project Atlas]]` and `[[Sarah]]` in the same paragraph, but neither note links to the other.
+
+1. **See the relationships**: run **Show keyword relationships** (command palette, or **Settings → Tools**). You get a list of pairs, strongest first:
+
+   ```
+   Project Atlas ↔ Sarah     23 notes together (14 same paragraph)   Not linked    [Show notes] [Link] [Dismiss]
+   Kubernetes ↔ Helm         11 notes together (9 same paragraph)    Linked        [Show notes] [Dismiss]
+   ```
+
+   - **Show notes** lists where the pair appears together
+   - **Link** adds each note to the other's Related section straight away
+   - **Dismiss** hides the pair from the report and from Related sections (use **Restore dismissed** to bring pairs back)
+   - Untick **Not linked yet only** to see every pair, or change **Min notes together**
+
+2. **Turn on Related sections**: on the `Project Atlas` keyword (or on its group), switch on **Related section**.
+
+3. **Update**: run **Update related sections**. A preview shows the before and after for every note that will change. Click **Update** and `Project Atlas.md` gets:
+
+   ```markdown
+   <!-- akl-related:start -->
+   ## Related
+   - [[Sarah]]
+   - [[Weekly Sync]]
+   <!-- akl-related:end -->
+   ```
+
+   Run it again whenever you like. Only notes whose list actually changed are rewritten.
+
+**What goes in a Related section**:
+- The strongest partners that appear together in at least **Min notes together** notes (default 3), up to **Max entries** (default 8)
+- Not notes the target already links to in its own text, since those are already connected
+- Not dismissed pairs
+- Always any pair you linked with the report's **Link** button, on both notes, even if the toggle is off for them
+- Entries are sorted alphabetically, so the block only changes when the list itself changes
+
+**Safety**:
+- Only the text between `<!-- akl-related:start -->` and `<!-- akl-related:end -->` is ever changed. The markers are invisible in reading view
+- A new section goes at the end of the note, before the plugin's own tag line
+- Links inside Related sections are ignored when measuring relationships, so the sections never feed their own results
+- Turning the toggle off and updating removes the section, along with the blank line before it, and leaves the rest of the note untouched
+- Sections are only written when you run the command, never on save, which keeps sync quiet
+
 ## 📋 Available Commands
 
-The plugin adds 8 commands to Obsidian's command palette:
+The plugin's commands in Obsidian's command palette include:
 
 1. **Link keywords in current note** - Apply linking to active note
 2. **Preview keyword linking in current note** - Preview changes for active note
@@ -467,6 +523,8 @@ The plugin adds 8 commands to Obsidian's command palette:
 6. **Export keywords to JSON** - Backup keyword configuration
 7. **Import keywords from JSON** - Import keyword configuration
 8. **🆕 Suggest keywords from notes** - Analyze vault and suggest keywords
+9. **🆕 Show keyword relationships** - Report of keyword targets that keep appearing together
+10. **🆕 Update related sections** - Preview and write the Related sections of opted-in target notes
 
 ## ⚙️ Settings
 
@@ -478,6 +536,12 @@ The plugin adds 8 commands to Obsidian's command palette:
 - **Auto-create notes**: Automatically create target notes that don't exist
 - **🆕 Pick target from context**: When keywords share text but link to different notes, choose the target for each mention from its surroundings
 - **🆕 When context is unclear**: Link to the first keyword's target, or leave the mention unlinked
+
+### 🆕 Related Sections Settings
+
+- **Minimum notes together**: How many notes two targets must share before they're listed (default 3)
+- **Maximum entries**: Most related notes listed in one note (default 8)
+- **Section heading**: Heading inside the block (default `## Related`, empty for none)
 
 ### Note Creation Settings
 
@@ -496,6 +560,7 @@ Each keyword can be configured with:
 - **🆕 Use Relative Links**: Create relative path links
 - **🆕 Block Reference**: Optional block/heading reference
 - **🆕 Context Hints**: Words that point to this target, shown when another keyword shares its text
+- **🆕 Related Section**: Keep a Related list in the target note (also available per group)
 
 ## 🚀 Getting Started
 
@@ -879,6 +944,8 @@ If you frequently reorganize:
 ## 🆕 What's New in This Version
 
 ### Major Features
+- **🆕 Picking the Right Target from Context**: Give several keywords the same text, and each mention links to the target its paragraph fits
+- **🆕 Keyword Relationships and Related Sections**: Find keyword targets that keep appearing together, and keep an auto-updated Related list in target notes
 - **AI-Powered Keyword Suggestions**: Automatically discover keywords from your notes with frequency analysis
 - **Link Scoping System**: Control where keywords link with vault-wide or folder-specific scoping
 - **Relative Link Support**: Option to create relative path links instead of absolute paths

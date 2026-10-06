@@ -31,6 +31,10 @@ async function loadSettings(plugin) {
         settings.keywordGroups = [];
     }
 
+    // Related-section pair lists: own copies, so pushing to them never changes the defaults
+    settings.relatedDismissed = Array.isArray(settings.relatedDismissed) ? settings.relatedDismissed.slice() : [];
+    settings.relatedPins = Array.isArray(settings.relatedPins) ? settings.relatedPins.slice() : [];
+
     // Ensure skipCodeBlocks exists in each group's settings (migration for existing groups)
     for (let group of settings.keywordGroups) {
         if (group.settings && group.settings.skipCodeBlocks === undefined) {

@@ -532,7 +532,8 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     suggestMode: false,
                     preventSelfLink: false,
                     skipCodeBlocks: false,
-                    caseSensitive: null
+                    caseSensitive: null,
+                    relatedSection: false
                 }
             });
             // Re-render the display to show new entry
@@ -641,6 +642,49 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                     this.plugin.settings.autoLinkOnSave = value;
                     await this.plugin.saveSettings();
                     new Notice('Please reload the plugin for this change to take effect');
+                }));
+
+        // Related sections
+        new Setting(containerEl)
+            .setName('Related sections')
+            .setDesc('Lists of other keyword targets that a target note is often linked alongside. Turn "Related section" on per keyword or group, then run "Update related sections".')
+            .setHeading();
+
+        new Setting(containerEl)
+            .setName('Minimum notes together')
+            .setDesc('Two targets must be linked in at least this many of the same notes to be listed')
+            .addText(text => {
+                text.inputEl.type = 'number';
+                text.inputEl.min = '1';
+                text.setValue(String(this.plugin.settings.relatedMinNotes || 3))
+                    .onChange(async (value) => {
+                        this.plugin.settings.relatedMinNotes = Math.max(1, parseInt(value, 10) || 3);
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        new Setting(containerEl)
+            .setName('Maximum entries')
+            .setDesc('Most related notes listed in one note (strongest first)')
+            .addText(text => {
+                text.inputEl.type = 'number';
+                text.inputEl.min = '1';
+                text.setValue(String(this.plugin.settings.relatedMaxEntries || 8))
+                    .onChange(async (value) => {
+                        this.plugin.settings.relatedMaxEntries = Math.max(1, parseInt(value, 10) || 8);
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        new Setting(containerEl)
+            .setName('Section heading')
+            .setDesc('Heading at the top of the related list. Leave empty for no heading.')
+            .addText(text => text
+                .setValue(this.plugin.settings.relatedHeading === undefined ? '## Related' : this.plugin.settings.relatedHeading)
+                .setPlaceholder('## Related')
+                .onChange(async (value) => {
+                    this.plugin.settings.relatedHeading = value;
+                    await this.plugin.saveSettings();
                 }));
 
         // Note creation section
@@ -1409,6 +1453,27 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                 caseSensitiveSetting.settingEl.addClass('akl-disabled-setting');
             }
 
+            // Related section toggle (per-keyword)
+            const relatedSectionSetting = new Setting(cardBody)
+                .setName('Related section')
+                .setDesc(isInGroup
+                    ? `Inherited from group "${groupName}"`
+                    : 'Keep a "Related" list in the target note of other keyword targets it often appears with. Written by the "Update related sections" command, between markers - the rest of the note is never touched.')
+                .addToggle(toggle => {
+                    const effectiveSettings = this.plugin.getEffectiveKeywordSettings(item);
+                    toggle.setValue(effectiveSettings.relatedSection || false)
+                        .setDisabled(isInGroup)
+                        .onChange(async (value) => {
+                            if (!isInGroup) {
+                                this.plugin.settings.keywords[i].relatedSection = value;
+                                await this.plugin.saveSettings();
+                            }
+                        });
+                });
+            if (isInGroup) {
+                relatedSectionSetting.settingEl.addClass('akl-disabled-setting');
+            }
+
             // Link Scope dropdown
             const linkScopeSetting = new Setting(cardBody)
                 .setName('Link scope')
@@ -1779,6 +1844,17 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
                             await this.plugin.saveSettings();
                         });
                 });
+
+            // Related section toggle
+            new Setting(settingsSection)
+                .setName('Related section')
+                .setDesc('Keep a "Related" list in these keywords\' target notes (written by "Update related sections")')
+                .addToggle(toggle => toggle
+                    .setValue(group.settings.relatedSection || false)
+                    .onChange(async (value) => {
+                        group.settings.relatedSection = value;
+                        await this.plugin.saveSettings();
+                    }));
         }
     }
 
@@ -1841,6 +1917,26 @@ class AutoKeywordLinkerSettingTab extends PluginSettingTab {
      * Display the Tools tab
      */
     displayToolsTab(containerEl) {
+
+        // ── Relationships ────────────────────────────────────────────────────
+        new Setting(containerEl)
+            .setName('Relationships')
+            .setDesc('Find keyword targets that keep appearing together, and keep Related sections up to date.')
+            .setHeading();
+
+        new Setting(containerEl)
+            .setName('Show keyword relationships')
+            .setDesc('Report of target notes linked together in your notes, strongest first, with buttons to link or dismiss each pair.')
+            .addButton(button => button
+                .setButtonText('Open')
+                .onClick(() => this.plugin.showRelationships()));
+
+        new Setting(containerEl)
+            .setName('Update related sections')
+            .setDesc('Rewrite the Related section of every target note with "Related section" turned on. Shows a preview first.')
+            .addButton(button => button
+                .setButtonText('Preview')
+                .onClick(() => this.plugin.updateRelatedSections()));
 
         // ── Maintenance ──────────────────────────────────────────────────────
         new Setting(containerEl)

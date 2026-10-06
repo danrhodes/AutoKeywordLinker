@@ -175,6 +175,25 @@
 6. Export keywords to JSON
 7. Import keywords from JSON
 8. 🆕 Suggest keywords from notes
+9. 🆕 Show keyword relationships
+10. 🆕 Update related sections
+
+## 🆕 Keyword Relationships & Related Sections
+
+- Finds pairs of keyword targets that are linked together in your notes
+- Same paragraph (or same top-level bullet) counts fully; same note counts less
+- Hub notes (dailies, indexes) that link many targets are discounted
+- Strength ranks pairs against the rarer target's appearances, so popular notes don't dominate
+- Fast: works from Obsidian's metadata cache, reading only target notes
+- Relationships report: strongest pairs first, filter by minimum notes and "not linked yet"
+- Report actions: show the notes a pair shares, Link (adds both to each other's Related section), Dismiss (remembered), Restore dismissed
+- Per-keyword and per-group "Related section" toggle (opt-in)
+- "Update related sections" command with before/after preview
+- Related block kept between `<!-- akl-related:start -->` / `<!-- akl-related:end -->` markers; nothing outside them is touched
+- Skips notes the target already links to; alphabetical entries, so notes are only rewritten when the list changes
+- Links inside Related blocks are ignored when measuring relationships (no feedback loop)
+- New blocks go before the plugin's trailing tag line; turning the toggle off removes the block cleanly
+- Settings: minimum notes together, maximum entries, section heading
 
 ## Performance Features
 
