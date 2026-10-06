@@ -147,6 +147,24 @@ function registerCommands(plugin) {
         name: 'View statistics',
         callback: () => plugin.showStatistics()
     });
+
+    // ============================================================
+    // RELATIONSHIP COMMANDS
+    // ============================================================
+
+    // Register command: Report of keyword targets that keep appearing together
+    plugin.addCommand({
+        id: 'show-keyword-relationships',
+        name: 'Show keyword relationships',
+        callback: () => plugin.showRelationships()
+    });
+
+    // Register command: Rewrite the Related sections of opted-in target notes (with preview)
+    plugin.addCommand({
+        id: 'update-related-sections',
+        name: 'Update related sections',
+        callback: () => plugin.updateRelatedSections()
+    });
 }
 
 module.exports = { registerCommands };

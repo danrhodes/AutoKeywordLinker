@@ -24,7 +24,8 @@ function getEffectiveKeywordSettings(settings, keyword) {
         suggestMode: false,
         preventSelfLink: false,
         skipCodeBlocks: null,
-        caseSensitive: null
+        caseSensitive: null,
+        relatedSection: false
     };
 
     // If keyword is in a group, use group settings (no keyword-level overrides allowed)
@@ -50,6 +51,7 @@ function getEffectiveKeywordSettings(settings, keyword) {
     if (keyword.preventSelfLink !== null && keyword.preventSelfLink !== undefined) effectiveSettings.preventSelfLink = keyword.preventSelfLink;
     if (keyword.skipCodeBlocks !== null && keyword.skipCodeBlocks !== undefined) effectiveSettings.skipCodeBlocks = keyword.skipCodeBlocks;
     if (keyword.caseSensitive !== null && keyword.caseSensitive !== undefined) effectiveSettings.caseSensitive = keyword.caseSensitive;
+    if (keyword.relatedSection !== null && keyword.relatedSection !== undefined) effectiveSettings.relatedSection = keyword.relatedSection;
 
     return effectiveSettings;
 }

@@ -50,6 +50,11 @@ const DEFAULT_SETTINGS = {
     skipCodeBlocks: false,           // Skip keyword linking and suggestions inside fenced code blocks (``` or ~~~)
     contextDisambiguation: true,     // When keywords share text but point at different notes, pick the target from context
     ambiguousFallback: 'first',      // When context doesn't clearly pick one: 'first' (first keyword's target) or 'skip' (don't link)
+    relatedMinNotes: 3,              // Related sections: notes two targets must share before they're listed
+    relatedMaxEntries: 8,            // Related sections: most entries per note
+    relatedHeading: '## Related',    // Related sections: heading inside the block (empty for none)
+    relatedDismissed: [],            // Related sections: [pathA, pathB] pairs hidden from the report and blocks
+    relatedPins: [],                 // Related sections: [pathA, pathB] pairs always listed (from the report's Link button)
     statistics: {                    // Statistics tracking
         totalLinksCreated: 0,
         totalNotesProcessed: 0,

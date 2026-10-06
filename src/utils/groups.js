@@ -22,6 +22,7 @@ function assignKeywordToGroup(keyword, groupId) {
     keyword.suggestMode = null;
     keyword.preventSelfLink = null;
     keyword.caseSensitive = null;
+    keyword.relatedSection = null;
 }
 
 module.exports = { assignKeywordToGroup };
